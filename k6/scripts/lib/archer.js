@@ -1,9 +1,34 @@
 import http from "k6/http";
-import { check } from "k6";
+import { check, sleep } from "k6";
 
 // ARCHER_URL is the base URL of the archer Go service.
 // Override via environment variable: k6 run -e ARCHER_URL=http://host:port ...
 const ARCHER_URL = __ENV.ARCHER_URL || "http://localhost:8080";
+
+const MAX_RETRIES = 10;
+const RETRY_INTERVAL_S = 3;
+
+/**
+ * Retry wrapper for setup-phase calls that must succeed.
+ * Archer may not be ready yet when k6 Jobs start; this avoids a
+ * hard crash during the setup() lifecycle hook.
+ */
+function withRetry(fn, label) {
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const result = fn();
+      if (result !== undefined && result !== null) return result;
+    } catch (_e) {
+      // fall through to retry
+    }
+    console.warn(
+      `${label}: attempt ${attempt}/${MAX_RETRIES} failed, retrying in ${RETRY_INTERVAL_S}s...`
+    );
+    sleep(RETRY_INTERVAL_S);
+  }
+  console.error(`${label}: all ${MAX_RETRIES} attempts failed`);
+  return null;
+}
 
 /**
  * Register an active workload with archer so it knows which services
@@ -20,15 +45,18 @@ const ARCHER_URL = __ENV.ARCHER_URL || "http://localhost:8080";
  * @returns {Object} The registered workload with server-assigned ID
  */
 export function registerWorkload(workload) {
-  const res = http.post(
-    `${ARCHER_URL}/api/v1/workloads`,
-    JSON.stringify(workload),
-    { headers: { "Content-Type": "application/json" } }
-  );
-  check(res, {
-    "workload registered (201)": (r) => r.status === 201,
-  });
-  return JSON.parse(res.body);
+  return withRetry(() => {
+    const res = http.post(
+      `${ARCHER_URL}/api/v1/workloads`,
+      JSON.stringify(workload),
+      { headers: { "Content-Type": "application/json" } }
+    );
+    const ok = check(res, {
+      "workload registered (201)": (r) => r.status === 201,
+    });
+    if (!ok) return undefined;
+    return JSON.parse(res.body);
+  }, "registerWorkload");
 }
 
 /**
@@ -37,6 +65,7 @@ export function registerWorkload(workload) {
  * @param {string} id - The workload ID returned by registerWorkload
  */
 export function deregisterWorkload(id) {
+  if (!id) return;
   const res = http.del(`${ARCHER_URL}/api/v1/workloads/${id}`);
   check(res, {
     "workload deregistered (204)": (r) => r.status === 204,

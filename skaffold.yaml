@@ -1,0 +1,27 @@
+apiVersion: skaffold/v4beta11
+kind: Config
+metadata:
+  name: zeus-loadgen
+build:
+  artifacts:
+    - image: archer
+      context: .
+      docker:
+        dockerfile: Dockerfile
+    - image: k6-loadgen
+      context: ./k6
+      docker:
+        dockerfile: Dockerfile.k6
+deploy:
+  kubectl:
+    hooks:
+      before:
+        - host:
+            command:
+              - sh
+              - -c
+              - kubectl delete job k6-browse k6-checkout --ignore-not-found
+manifests:
+  kustomize:
+    paths:
+      - kubernetes-manifests

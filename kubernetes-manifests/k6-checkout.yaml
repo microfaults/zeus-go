@@ -1,0 +1,46 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: k6-checkout
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app: k6-checkout
+    spec:
+      restartPolicy: Never
+      initContainers:
+        - name: wait-for-archer
+          image: busybox:1.37
+          command:
+            - sh
+            - -c
+            - |
+              until wget -qO- http://archer:8080/api/v1/status >/dev/null 2>&1; do
+                echo "waiting for archer..."; sleep 2;
+              done
+      containers:
+        - name: k6-checkout
+          image: k6-loadgen
+          command: ["k6", "run", "/scripts/runner.js"]
+          env:
+            - name: ARCHER_URL
+              value: "http://archer:8080"
+            - name: BASE_URL
+              value: "http://frontend:80"
+            - name: FLOW
+              value: "online-boutique/checkout"
+            - name: PERSONA
+              value: "aggressive"
+            - name: VUS
+              value: "5"
+            - name: DURATION
+              value: "5m"
+          resources:
+            requests:
+              cpu: 200m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi

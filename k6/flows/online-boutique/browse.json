@@ -31,7 +31,6 @@
       "path": "/cart",
       "requires": "view_product",
       "probability": "engage",
-      "headers": { "Content-Type": "application/json" },
       "body": {
         "product_id": "{{steps.view_product.product_id}}",
         "quantity": "{{random_int(1,3)}}"

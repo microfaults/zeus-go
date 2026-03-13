@@ -137,27 +137,35 @@ function executeStep(step, context, baseURL, traceID) {
   // Dispatch HTTP method.
   let res;
   const method = (step.method || "GET").toUpperCase();
-  const bodyStr =
-    resolved.body !== null ? JSON.stringify(resolved.body) : null;
+
+  // Encode body: if Content-Type is application/json, serialize as JSON string.
+  // Otherwise pass the object as-is so k6 sends it as form-encoded.
+  let body = null;
+  if (resolved.body !== null) {
+    const ct = (resolved.headers["Content-Type"] || "").toLowerCase();
+    body = ct.includes("application/json")
+      ? JSON.stringify(resolved.body)
+      : resolved.body;
+  }
 
   switch (method) {
     case "GET":
       res = http.get(url, params);
       break;
     case "POST":
-      res = http.post(url, bodyStr, params);
+      res = http.post(url, body, params);
       break;
     case "PUT":
-      res = http.put(url, bodyStr, params);
+      res = http.put(url, body, params);
       break;
     case "PATCH":
-      res = http.patch(url, bodyStr, params);
+      res = http.patch(url, body, params);
       break;
     case "DELETE":
       res = http.del(url, null, params);
       break;
     default:
-      res = http.request(method, url, bodyStr, params);
+      res = http.request(method, url, body, params);
   }
 
   // Check expected status codes.
@@ -245,7 +253,7 @@ export function createEngine(flowPath, personaPath, dataPath) {
         meta_trace_id: metaTraceID,
         status: "running",
       });
-      return { workloadID: wl.id, metaTraceID: metaTraceID };
+      return { workloadID: wl ? wl.id : null, metaTraceID: metaTraceID };
     },
 
     /**
