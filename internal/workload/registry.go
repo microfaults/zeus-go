@@ -91,6 +91,20 @@ func (r *Registry) Deregister(id string) error {
 	return nil
 }
 
+// UpdateStatus sets the status of a registered workload.
+// Valid statuses are "running", "paused", and "stopped".
+// Returns an error if the workload does not exist.
+func (r *Registry) UpdateStatus(id, status string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	w, ok := r.workloads[id]
+	if !ok {
+		return fmt.Errorf("workload: id %q not found", id)
+	}
+	w.Status = status
+	return nil
+}
+
 // TargetsInUse returns the deduplicated union of all targets across active workloads.
 func (r *Registry) TargetsInUse() []string {
 	r.mu.RLock()

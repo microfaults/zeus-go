@@ -71,3 +71,17 @@ export function getAttackStatus(id) {
   const res = http.get(`${ARCHER_URL}/api/v1/attacks/${id}`);
   return JSON.parse(res.body);
 }
+
+/**
+ * Fetch the current state of a registered workload.
+ * Used by the engine each iteration to check if Manteion has paused
+ * or stopped this flow via PATCH /api/v1/workloads/{id}.
+ *
+ * @param {string} id - Workload ID returned by registerWorkload
+ * @returns {Object|null} The workload object (includes status field), or null on error
+ */
+export function getWorkload(id) {
+  const res = http.get(`${ARCHER_URL}/api/v1/workloads/${id}`);
+  if (res.status !== 200) return null;
+  return JSON.parse(res.body);
+}
