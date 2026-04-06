@@ -35,6 +35,16 @@ func (s *Server) handleListWorkloads(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, list)
 }
 
+func (s *Server) handleGetWorkload(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	wl, ok := s.registry.Get(id)
+	if !ok {
+		writeError(w, http.StatusNotFound, "workload not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, wl)
+}
+
 func (s *Server) handleDeleteWorkload(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if err := s.registry.Deregister(id); err != nil {
@@ -42,6 +52,38 @@ func (s *Server) handleDeleteWorkload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleUpdateWorkload handles PATCH /api/v1/workloads/{id}.
+// Manteion uses this to pause, resume, or stop a running k6 flow.
+// The k6 sidecar polls its own workload entry and self-governs based on status.
+func (s *Server) handleUpdateWorkload(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+
+	var patch struct {
+		Status string `json:"status"`
+	}
+	if err := readJSON(r, &patch); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json: "+err.Error())
+		return
+	}
+
+	switch patch.Status {
+	case "running", "paused", "stopped":
+		// valid
+	default:
+		writeError(w, http.StatusBadRequest,
+			`status must be one of: "running", "paused", "stopped"`)
+		return
+	}
+
+	if err := s.registry.UpdateStatus(id, patch.Status); err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+
+	wl, _ := s.registry.Get(id)
+	writeJSON(w, http.StatusOK, wl)
 }
 
 func generateID() string {

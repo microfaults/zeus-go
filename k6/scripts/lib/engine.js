@@ -19,7 +19,8 @@
 
 import http from "k6/http";
 import { check, sleep } from "k6";
-import { registerWorkload, deregisterWorkload } from "./archer.js";
+import exec from "k6/execution";
+import { registerWorkload, deregisterWorkload, getWorkload } from "./archer.js";
 import { generateMetaTraceID, withTracing } from "./tracing.js";
 import { resolveObject, resolveTemplate } from "./template.js";
 
@@ -249,8 +250,27 @@ export function createEngine(flowPath, personaPath, dataPath) {
 
     /**
      * Execute one VU iteration through the flow.
+     *
+     * At the start of each iteration, polls Archer for this workload's
+     * current status. Manteion sets status via PATCH /api/v1/workloads/{id}.
+     *   - "paused"  → sleep 5s and skip all steps this iteration
+     *   - "stopped" → abort the VU gracefully
+     *   - "running" → proceed normally
      */
     run: function (setupData) {
+      // ── Status gate ──────────────────────────────────────────────
+      const wl = getWorkload(setupData.workloadID);
+      if (wl) {
+        if (wl.status === "paused") {
+          sleep(5); // check again after 5s
+          return;   // skip all flow steps this iteration
+        }
+        if (wl.status === "stopped") {
+          exec.test.abort("workload stopped by manteion");
+        }
+      }
+      // ── End status gate ──────────────────────────────────────────
+
       const traceID = setupData.metaTraceID;
 
       // Per-iteration state: extracted values and execution tracking.

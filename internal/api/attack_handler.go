@@ -36,6 +36,10 @@ func (s *Server) handleCreateAttack(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, attack)
 }
 
+func (s *Server) handleListAttacks(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.manager.List())
+}
+
 func (s *Server) handleGetAttack(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	attack, ok := s.manager.Get(id)

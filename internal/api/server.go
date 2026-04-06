@@ -41,10 +41,13 @@ func (s *Server) routes() {
 	// Workloads
 	s.mux.HandleFunc("POST /api/v1/workloads", s.handleCreateWorkload)
 	s.mux.HandleFunc("GET /api/v1/workloads", s.handleListWorkloads)
+	s.mux.HandleFunc("GET /api/v1/workloads/{id}", s.handleGetWorkload)
+	s.mux.HandleFunc("PATCH /api/v1/workloads/{id}", s.handleUpdateWorkload)
 	s.mux.HandleFunc("DELETE /api/v1/workloads/{id}", s.handleDeleteWorkload)
 
 	// Attacks
 	s.mux.HandleFunc("POST /api/v1/attacks", s.handleCreateAttack)
+	s.mux.HandleFunc("GET /api/v1/attacks", s.handleListAttacks)
 	s.mux.HandleFunc("GET /api/v1/attacks/{id}", s.handleGetAttack)
 	s.mux.HandleFunc("DELETE /api/v1/attacks/{id}", s.handleStopAttack)
 
