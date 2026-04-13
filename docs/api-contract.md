@@ -397,7 +397,7 @@ GET /api/v1/metrics/summary
 
 ### 4. Precision attack control
 
-These endpoints stay from the current Archer API, extended with `experiment_id` and `run_ref`.
+These endpoints stay from the current API, extended with `experiment_id` and `run_ref`.
 
 #### Launch an attack
 
@@ -456,7 +456,7 @@ GET /readyz         — readiness (200 if dataset store, prom registry, k6 runti
 GET /api/v1/status  — operator-friendly overview: runs, attacks, datasets, errors
 ```
 
-## Disposition of existing Archer endpoints
+## Disposition of existing legacy endpoints
 
 | Current endpoint | Disposition | Rationale |
 |---|---|---|
@@ -560,7 +560,7 @@ Atropos-go SDKs extract `atropos.workflow` from incoming W3C Baggage on every re
 
 ### The fix
 
-Zeus populates `atropos.workflow` at the **request site** in both the k6 engine and Archer's vegeta targeter.
+Zeus populates `atropos.workflow` at the **request site** in both the k6 engine and Zeus's vegeta targeter.
 
 **Flow for k6 traffic:**
 
@@ -569,7 +569,7 @@ Zeus populates `atropos.workflow` at the **request site** in both the k6 engine 
 3. `runner.js` reads `ZEUS_WORKFLOW_LABEL` in init context alongside `META_TRACE_ID`.
 4. The engine injects both into every request's W3C Baggage header: `meta-trace-id=<hex>,atropos.workflow=<label>`.
 
-**Flow for Archer attack traffic:**
+**Flow for Zeus attack traffic:**
 
 1. `POST /attacks` accepts a `workflow_label` field. If absent and `run_ref` is set, defaults to the linked run's `workflow_label`.
 2. `AttackConfig` gains a `WorkflowLabel string` field.

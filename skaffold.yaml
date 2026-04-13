@@ -4,7 +4,7 @@ metadata:
   name: zeus-loadgen
 build:
   artifacts:
-    - image: archer
+    - image: zeus
       context: .
       docker:
         dockerfile: Dockerfile

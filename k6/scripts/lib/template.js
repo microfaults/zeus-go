@@ -2,64 +2,73 @@
  * template.js - Lightweight {{expression}} parser and evaluator.
  *
  * Evaluates template expressions against a context containing:
- *   - pool: data pools (named collections of objects)
+ *   - data: data pools (named collections of objects)
  *   - steps: extracted values from previously executed flow steps
  *   - env: k6 __ENV variables
  *
  * Expression syntax:
- *   {{pool.<collection>.<field>}}    - Random item from pool, access field
- *   {{steps.<step_name>.<key>}}      - Value from a previous step's extract
+ *   {{data.<collection>.<field>}}    - Random item from pool, access field
+ *   {{data.<collection>.<field>.<i>}} - Array-indexed access on a field
+ *   {{steps.<id>.<key>}}             - Value from a previous step's extract
  *   {{random_int(min,max)}}          - Random integer in [min, max]
  *   {{random_choice(a,b,c)}}         - Random pick from comma-separated literals
  *   {{env.VAR_NAME}}                 - k6 __ENV variable
  *
- * Pool cache: within a single resolveObject() call, repeated references to
- * the same pool collection return the same random item. This ensures that
- * {{pool.products.id}} in a URL and {{pool.products.name}} in the body
+ * Data cache: within a single resolveObject() call, repeated references to
+ * the same data collection return the same random item. This ensures that
+ * {{data.products.id}} in a URL and {{data.products.name}} in the body
  * of the same step refer to the same product.
+ *
+ * Scope-chain resolution: when _resolveSteps is set in the context, steps.*
+ * expressions are resolved via the scope chain (DSL v2 tree-walking engine).
+ * Falls back to flat lookup if _resolveSteps is not provided.
  */
 
 const EXPR_RE = /\{\{(.+?)\}\}/g;
 
 /**
  * Evaluate a single template expression against the context.
- *
- * @param {string} expr - The expression inside {{...}}, trimmed
- * @param {object} context - { pool, steps, env, _poolCache }
- * @returns {*} The resolved value (may be string, number, object, etc.)
  */
 function evaluateExpression(expr, context) {
   expr = expr.trim();
 
-  // pool.<collection>.<field>
-  if (expr.startsWith("pool.")) {
+  // data.<collection>.<field>
+  if (expr.startsWith("data.")) {
     const parts = expr.split(".");
     const collection = parts[1];
     const field = parts.slice(2).join(".");
 
-    if (!context._poolCache[collection]) {
-      const items = context.pool[collection];
+    // Check variant overrides first
+    if (context._dataOverrides) {
+      const overridePath = collection + (field ? "." + field : "");
+      const override = getNestedField(context._dataOverrides, overridePath);
+      if (override !== undefined) return override;
+    }
+
+    if (!context._dataCache[collection]) {
+      const items = context.data ? context.data[collection] : undefined;
       if (!items || items.length === 0) {
-        throw new Error(`template: pool "${collection}" is empty or undefined`);
+        return undefined;
       }
-      context._poolCache[collection] =
+      context._dataCache[collection] =
         items[Math.floor(Math.random() * items.length)];
     }
 
-    const item = context._poolCache[collection];
-    // Support nested field access: "address.city"
+    const item = context._dataCache[collection];
     return getNestedField(item, field);
   }
 
-  // steps.<step_name>.<key>
+  // steps.<id>.<key> — scope-chain resolution in v2, flat lookup fallback
   if (expr.startsWith("steps.")) {
-    const parts = expr.split(".");
-    const stepName = parts[1];
-    const key = parts.slice(2).join(".");
-    const stepData = context.steps[stepName];
-    if (!stepData) {
-      return undefined;
+    const path = expr.substring(6);
+    if (context._resolveSteps) {
+      return context._resolveSteps(path);
     }
+    const parts = path.split(".");
+    const stepName = parts[0];
+    const key = parts.slice(1).join(".");
+    const stepData = context.steps ? context.steps[stepName] : undefined;
+    if (!stepData) return undefined;
     return getNestedField(stepData, key);
   }
 
@@ -84,12 +93,11 @@ function evaluateExpression(expr, context) {
     return __ENV[varName] || "";
   }
 
-  throw new Error(`template: unknown expression "${expr}"`);
+  return undefined;
 }
 
 /**
  * Access a nested field on an object via dot-separated path.
- * "address.city" on { address: { city: "NYC" } } returns "NYC".
  */
 function getNestedField(obj, path) {
   if (!path) return obj;
@@ -107,10 +115,6 @@ function getNestedField(obj, path) {
  * Resolve a single template string. If the entire string is one expression,
  * returns the native type (number, object, etc.). Otherwise performs string
  * interpolation.
- *
- * @param {string} templateStr - String possibly containing {{...}} expressions
- * @param {object} context - { pool, steps, env, _poolCache }
- * @returns {*} Resolved value
  */
 export function resolveTemplate(templateStr, context) {
   if (typeof templateStr !== "string") return templateStr;
@@ -133,19 +137,17 @@ export function resolveTemplate(templateStr, context) {
 
 /**
  * Deep-resolve all template expressions in an object/array/string.
- * Creates a fresh pool cache so that pool references within this call
- * are consistent (same collection → same random item).
- *
- * @param {*} obj - Value to resolve (string, object, array, or primitive)
- * @param {object} context - { pool, steps, env }
- * @returns {*} Deep copy with all templates resolved
+ * Creates a fresh data cache so that data references within this call
+ * are consistent (same collection -> same random item).
  */
 export function resolveObject(obj, context) {
   const scopedContext = {
-    pool: context.pool,
-    steps: context.steps,
+    data: context.data,
+    steps: context.steps || null,
     env: context.env,
-    _poolCache: {},
+    _dataCache: {},
+    _resolveSteps: context._resolveSteps || null,
+    _dataOverrides: context._dataOverrides || null,
   };
   return resolveDeep(obj, scopedContext);
 }
@@ -161,5 +163,5 @@ function resolveDeep(obj, context) {
     }
     return result;
   }
-  return obj; // numbers, booleans pass through
+  return obj;
 }

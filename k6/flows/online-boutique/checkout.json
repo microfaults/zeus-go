@@ -1,77 +1,113 @@
 {
+  "$schema": "https://faults-lab.dev/zeus/workflow.schema.json",
+  "version": "2",
   "name": "online-boutique-checkout",
   "description": "Full purchase flow: browse, cart, checkout",
   "targets": [
-    "frontend",
-    "productcatalogservice",
-    "cartservice",
-    "checkoutservice",
-    "paymentservice",
-    "shippingservice",
-    "emailservice",
-    "currencyservice"
+    "frontend", "productcatalogservice", "cartservice",
+    "checkoutservice", "paymentservice", "shippingservice",
+    "emailservice", "currencyservice"
   ],
-  "estimatedRpsPerVu": 3,
+  "base_url": "http://frontend:8080",
+  "estimated_rps_per_vu": 3,
+  "default_delay": { "min_ms": 2000, "max_ms": 6000 },
   "thresholds": {
     "http_req_failed": ["rate<0.1"],
     "http_req_duration": ["p(95)<3000"]
   },
-  "steps": [
-    {
-      "name": "homepage",
-      "method": "GET",
-      "path": "/",
-      "expect": [200]
-    },
-    {
-      "name": "view_product",
-      "method": "GET",
-      "path": "/product/{{pool.products.id}}",
-      "requires": "homepage",
-      "probability": "explore",
-      "expect": [200],
-      "extract": {
-        "product_id": "{{pool.products.id}}"
+  "data_schema": {
+    "pools": {
+      "products": { "fields": ["id", "name"], "min_size": 5 },
+      "users": {
+        "fields": [
+          "email", "street_address", "zip_code", "city", "state",
+          "country", "credit_card_number", "credit_card_expiration_month",
+          "credit_card_expiration_year", "credit_card_cvv"
+        ],
+        "min_size": 1
       }
-    },
-    {
-      "name": "add_to_cart",
-      "method": "POST",
-      "path": "/cart",
-      "requires": "view_product",
-      "probability": "engage",
-      "body": {
-        "product_id": "{{steps.view_product.product_id}}",
-        "quantity": "{{random_int(1,2)}}"
-      },
-      "expect": [200, 302]
-    },
-    {
-      "name": "view_cart",
-      "method": "GET",
-      "path": "/cart",
-      "requires": "add_to_cart",
-      "expect": [200]
-    },
-    {
-      "name": "checkout",
-      "method": "POST",
-      "path": "/cart/checkout",
-      "requires": "view_cart",
-      "probability": "commit",
-      "body": {
-        "email": "{{pool.users.email}}",
-        "street_address": "{{pool.users.street_address}}",
-        "zip_code": "{{pool.users.zip_code}}",
-        "city": "{{pool.users.city}}",
-        "state": "{{pool.users.state}}",
-        "country": "{{pool.users.country}}",
-        "credit_card_number": "{{pool.users.credit_card_number}}",
-        "credit_card_expiration_month": "{{pool.users.credit_card_expiration_month}}",
-        "credit_card_expiration_year": "{{pool.users.credit_card_expiration_year}}",
-        "credit_card_cvv": "{{pool.users.credit_card_cvv}}"
-      },
-      "expect": [200, 302]
     }
-  ]
+  },
+  "root": {
+    "type": "sequence",
+    "id": "checkout-session",
+    "children": [
+      {
+        "type": "request",
+        "id": "homepage",
+        "method": "GET",
+        "path": "/",
+        "expect": { "status": [200] }
+      },
+      {
+        "type": "optional",
+        "probability": "explore",
+        "child": {
+          "type": "sequence",
+          "id": "product-flow",
+          "children": [
+            {
+              "type": "request",
+              "id": "view_product",
+              "method": "GET",
+              "path": "/product/{{data.products.id}}",
+              "expect": { "status": [200] },
+              "extract": { "product_id": "{{data.products.id}}" }
+            },
+            {
+              "type": "optional",
+              "probability": "engage",
+              "child": {
+                "type": "sequence",
+                "id": "purchase-flow",
+                "children": [
+                  {
+                    "type": "request",
+                    "id": "add_to_cart",
+                    "method": "POST",
+                    "path": "/cart",
+                    "body": {
+                      "product_id": "{{steps.view_product.product_id}}",
+                      "quantity": "{{random_int(1,2)}}"
+                    },
+                    "expect": { "status": [200, 302] }
+                  },
+                  {
+                    "type": "request",
+                    "id": "view_cart",
+                    "method": "GET",
+                    "path": "/cart",
+                    "expect": { "status": [200] }
+                  },
+                  {
+                    "type": "optional",
+                    "probability": "commit",
+                    "child": {
+                      "type": "request",
+                      "id": "checkout",
+                      "method": "POST",
+                      "path": "/cart/checkout",
+                      "body": {
+                        "email": "{{data.users.email}}",
+                        "street_address": "{{data.users.street_address}}",
+                        "zip_code": "{{data.users.zip_code}}",
+                        "city": "{{data.users.city}}",
+                        "state": "{{data.users.state}}",
+                        "country": "{{data.users.country}}",
+                        "credit_card_number": "{{data.users.credit_card_number}}",
+                        "credit_card_expiration_month": "{{data.users.credit_card_expiration_month}}",
+                        "credit_card_expiration_year": "{{data.users.credit_card_expiration_year}}",
+                        "credit_card_cvv": "{{data.users.credit_card_cvv}}"
+                      },
+                      "expect": { "status": [200, 302] }
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    ]
+  }
 }

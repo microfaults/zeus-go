@@ -3,7 +3,7 @@ FROM grafana/k6:latest
 # Generic runner entry point
 COPY runner.js /scripts/runner.js
 
-# JS modules (engine, template, archer, tracing, legacy personas)
+# JS modules (engine, template, zeus, tracing)
 COPY scripts/ /scripts/scripts/
 
 # Declarative config layers

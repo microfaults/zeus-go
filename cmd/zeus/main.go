@@ -17,7 +17,7 @@ import (
 )
 
 func main() {
-	addr := envOr("ARCHER_ADDR", ":8080")
+	addr := envOr("ZEUS_ADDR", ":8080")
 	evalInterval := 10 * time.Second
 
 	// Wire dependencies.
@@ -49,24 +49,24 @@ func main() {
 
 	// Start HTTP server.
 	go func() {
-		log.Printf("archer: listening on %s", addr)
+		log.Printf("zeus: listening on %s", addr)
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("archer: server error: %v", err)
+			log.Fatalf("zeus: server error: %v", err)
 		}
 	}()
 
 	// Wait for shutdown signal.
 	<-ctx.Done()
-	log.Println("archer: shutting down...")
+	log.Println("zeus: shutting down...")
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
-		log.Printf("archer: http shutdown error: %v", err)
+		log.Printf("zeus: http shutdown error: %v", err)
 	}
 
 	manager.StopAll()
-	log.Println("archer: stopped")
+	log.Println("zeus: stopped")
 }
 
 func envOr(key, fallback string) string {

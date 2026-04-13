@@ -1,26 +1,26 @@
 /**
- * runner.js - Generic config-driven k6 flow runner.
+ * runner.js - Generic config-driven k6 flow runner (DSL v2).
  *
- * This is a thin entry point that loads flow, persona, and data pool
- * JSON configs and delegates all execution to the flow engine.
- *
- * Adding a new service mesh = new JSON folder under flows/. Zero JS code.
+ * Loads a v2 flow JSON, persona, and data pool, then delegates all
+ * execution to the tree-walking engine.
  *
  * Usage:
  *   k6 run -e BASE_URL=http://frontend:8080 \
  *          -e FLOW=online-boutique/browse \
  *          -e PERSONA=cautious \
- *          -e ARCHER_URL=http://archer:8080 \
  *          runner.js
  *
  * Environment variables:
- *   FLOW       Path relative to flows/ dir (e.g., "online-boutique/browse")
- *   PERSONA    Persona filename without .json (e.g., "cautious", "aggressive")
- *   DATA       Optional data pool path override (defaults to flows/<app>/data.json)
- *   BASE_URL   Target service base URL
- *   VUS        Virtual users (default: 10)
- *   DURATION   Test duration (default: "5m")
- *   ARCHER_URL Archer service URL for workload registration
+ *   FLOW                    Path relative to flows/ (e.g., "online-boutique/browse")
+ *   PERSONA                 Persona filename without .json (default: "cautious")
+ *   DATA                    Data pool path override (default: flows/<app>/data.json)
+ *   BASE_URL                Target service base URL
+ *   VUS                     Virtual users (default: 10)
+ *   DURATION                Test duration (default: "5m")
+ *   ZEUS_URL                Zeus service URL (default: "http://localhost:8080")
+ *   ZEUS_DATASET_ENDPOINT   HTTP endpoint to fetch dataset (skips file-based data)
+ *   ZEUS_WORKFLOW_LABEL     Workflow label for atropos.workflow baggage
+ *   ZEUS_RUN_ID             Run ID for metrics
  */
 
 import { createEngine } from "./scripts/lib/engine.js";
@@ -33,11 +33,10 @@ const PERSONA = __ENV.PERSONA || "cautious";
 const flowPath = `./flows/${FLOW}.json`;
 const personaPath = `./personas/${PERSONA}.json`;
 
-// Data pool: defaults to flows/<app-directory>/data.json
-// Override with DATA env var for non-standard layouts.
+// Data pool: skip file load if dataset comes from zeus HTTP endpoint.
 const flowDir = FLOW.substring(0, FLOW.lastIndexOf("/"));
 const dataFile = __ENV.DATA || `${flowDir}/data`;
-const dataPath = `./flows/${dataFile}.json`;
+const dataPath = __ENV.ZEUS_DATASET_ENDPOINT ? null : `./flows/${dataFile}.json`;
 
 // ── Create engine in init context (open() works here) ─────────────
 

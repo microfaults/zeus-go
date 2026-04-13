@@ -1,49 +1,82 @@
 {
+  "$schema": "https://faults-lab.dev/zeus/workflow.schema.json",
+  "version": "2",
   "name": "online-boutique-browse",
   "description": "Browse products and optionally add to cart",
   "targets": ["frontend", "productcatalogservice", "currencyservice", "cartservice"],
-  "estimatedRpsPerVu": 2,
+  "base_url": "http://frontend:8080",
+  "estimated_rps_per_vu": 2,
+  "default_delay": { "min_ms": 3000, "max_ms": 8000 },
   "thresholds": {
     "http_req_failed": ["rate<0.1"],
     "http_req_duration": ["p(95)<2000"]
   },
-  "steps": [
-    {
-      "name": "homepage",
-      "method": "GET",
-      "path": "/",
-      "expect": [200]
-    },
-    {
-      "name": "view_product",
-      "method": "GET",
-      "path": "/product/{{pool.products.id}}",
-      "requires": "homepage",
-      "probability": "explore",
-      "expect": [200],
-      "extract": {
-        "product_id": "{{pool.products.id}}"
-      }
-    },
-    {
-      "name": "add_to_cart",
-      "method": "POST",
-      "path": "/cart",
-      "requires": "view_product",
-      "probability": "engage",
-      "body": {
-        "product_id": "{{steps.view_product.product_id}}",
-        "quantity": "{{random_int(1,3)}}"
-      },
-      "expect": [200, 302]
-    },
-    {
-      "name": "view_cart",
-      "method": "GET",
-      "path": "/cart",
-      "requires": "add_to_cart",
-      "probability": 0.5,
-      "expect": [200]
+  "data_schema": {
+    "pools": {
+      "products": { "fields": ["id", "name"], "min_size": 5 }
     }
-  ]
+  },
+  "root": {
+    "type": "sequence",
+    "id": "browse",
+    "children": [
+      {
+        "type": "request",
+        "id": "homepage",
+        "method": "GET",
+        "path": "/",
+        "expect": { "status": [200] }
+      },
+      {
+        "type": "optional",
+        "probability": "explore",
+        "child": {
+          "type": "sequence",
+          "id": "after-homepage",
+          "children": [
+            {
+              "type": "request",
+              "id": "view_product",
+              "method": "GET",
+              "path": "/product/{{data.products.id}}",
+              "expect": { "status": [200] },
+              "extract": { "product_id": "{{data.products.id}}" }
+            },
+            {
+              "type": "optional",
+              "probability": "engage",
+              "child": {
+                "type": "sequence",
+                "id": "cart-flow",
+                "children": [
+                  {
+                    "type": "request",
+                    "id": "add_to_cart",
+                    "method": "POST",
+                    "path": "/cart",
+                    "body": {
+                      "product_id": "{{steps.view_product.product_id}}",
+                      "quantity": "{{random_int(1,3)}}"
+                    },
+                    "expect": { "status": [200, 302] }
+                  },
+                  {
+                    "type": "optional",
+                    "probability": 0.5,
+                    "child": {
+                      "type": "request",
+                      "id": "view_cart",
+                      "method": "GET",
+                      "path": "/cart",
+                      "expect": { "status": [200] }
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    ]
+  }
 }
