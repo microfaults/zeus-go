@@ -90,7 +90,17 @@ A generic, config-driven k6 runner with a DSL v2 tree-walking engine. Test scena
 - `{{random_int(min,max)}}` / `{{random_choice(a,b,c)}}` - randomization
 - `{{env.VAR}}` - environment variable
 
-See `docs/workflow-dsl-v2.md` for the full DSL v2 specification.
+**Variants** let a request node carry a weighted set of sparse patches, so one step can model a realistic body mix (regions, feature flags, path variations) without duplicating the node:
+
+```json
+"variants": [
+  { "weight": 60, "set": { "body.region": "us-west" } },
+  { "weight": 30, "set": { "body.region": "eu-west" } },
+  { "weight": 10, "set": { "body.region": "ap-south", "body.post_type": 2 } }
+]
+```
+
+See `docs/workflow-dsl-v2.md` for the full DSL v2 specification and `docs/examples/deathstarbench-social-network.md` for a realistic multi-service workflow using `sequence`, `parallel`, `optional`, `delay`, and `variants` together.
 
 ## Quick Start
 
@@ -142,8 +152,35 @@ k6/
   flows/             DSL v2 workflow definitions (JSON)
   personas/          User behavior profiles (JSON)
 docs/
-  workflow-dsl-v2.md DSL v2 specification
-  api-contract.md    Zeus API contract
+  workflow-dsl-v2.md      DSL v2 specification
+  api-contract.md         Zeus HTTP API contract
+  cleanup-legacy-k6.md    Follow-up cleanup task list
+  examples/               End-to-end workflow examples
+```
+
+## Documentation
+
+| Doc | What it covers |
+|---|---|
+| [`docs/workflow-dsl-v2.md`](docs/workflow-dsl-v2.md) | Full JSON schema, node types (`sequence`, `parallel`, `delay`, `optional`, `request`), extract scope rules, variant semantics, data-schema handshake. |
+| [`docs/api-contract.md`](docs/api-contract.md) | Zeus control-plane HTTP surface: workflows, runs, datasets, attacks, stats, SSE events, Prometheus metrics catalog, baggage wiring. |
+| [`docs/examples/deathstarbench-social-network.md`](docs/examples/deathstarbench-social-network.md) | Realistic DSL v2 workflow against Death Star Bench Social Network — multi-service, `parallel` fan-out, weighted body variants. |
+| [`docs/cleanup-legacy-k6.md`](docs/cleanup-legacy-k6.md) | What gets deleted and migrated in the follow-up code refactor. |
+
+## Development
+
+```bash
+# Run Go tests
+go test ./...
+
+# Build all binaries
+go build ./...
+
+# Run zeus locally
+go run ./cmd/zeus
+
+# Format + vet
+go fmt ./... && go vet ./...
 ```
 
 ## Requirements
