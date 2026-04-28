@@ -5,28 +5,41 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+
 	"atropos-go/loadgen/internal/attacker"
-	"atropos-go/loadgen/internal/policy"
-	"atropos-go/loadgen/internal/workload"
+	"atropos-go/loadgen/internal/dataset"
+	"atropos-go/loadgen/internal/run"
+	"atropos-go/loadgen/internal/sse"
+	"atropos-go/loadgen/internal/stats"
+	"atropos-go/loadgen/internal/workflow"
 )
 
 const maxBodySize = 1 << 20 // 1 MiB
 
+// Deps groups the dependencies required by the API server.
+// Each field is a concrete store or service wired in main().
+type Deps struct {
+	Workflows *workflow.Store
+	Runs      *run.Store
+	Datasets  *dataset.Store
+	Attacks   *attacker.Manager
+	Metrics   *stats.Metrics
+	Snapshots *stats.SnapshotStore
+	Broker    *sse.Broker
+}
+
 // Server holds shared dependencies and configures routing.
 type Server struct {
-	registry *workload.Registry
-	manager  *attacker.Manager
-	engine   *policy.Engine
-	mux      *http.ServeMux
+	deps Deps
+	mux  *http.ServeMux
 }
 
 // NewServer creates an API server wired to the given components.
-func NewServer(reg *workload.Registry, mgr *attacker.Manager, eng *policy.Engine) *Server {
+func NewServer(d Deps) *Server {
 	s := &Server{
-		registry: reg,
-		manager:  mgr,
-		engine:   eng,
-		mux:      http.NewServeMux(),
+		deps: d,
+		mux:  http.NewServeMux(),
 	}
 	s.routes()
 	return s
@@ -38,25 +51,46 @@ func (s *Server) Handler() http.Handler {
 }
 
 func (s *Server) routes() {
-	// Workloads
-	s.mux.HandleFunc("POST /api/v1/workloads", s.handleCreateWorkload)
-	s.mux.HandleFunc("GET /api/v1/workloads", s.handleListWorkloads)
-	s.mux.HandleFunc("GET /api/v1/workloads/{id}", s.handleGetWorkload)
-	s.mux.HandleFunc("PATCH /api/v1/workloads/{id}", s.handleUpdateWorkload)
-	s.mux.HandleFunc("DELETE /api/v1/workloads/{id}", s.handleDeleteWorkload)
+	// Workflows
+	s.mux.HandleFunc("POST /api/v1/workflows", s.handleCreateWorkflow)
+	s.mux.HandleFunc("GET /api/v1/workflows", s.handleListWorkflows)
+	s.mux.HandleFunc("GET /api/v1/workflows/{id}", s.handleGetWorkflow)
+	s.mux.HandleFunc("DELETE /api/v1/workflows/{id}", s.handleDeleteWorkflow)
+	s.mux.HandleFunc("POST /api/v1/workflows/{id}/validate", s.handleValidateWorkflow)
+
+	// Runs (workflow-scoped)
+	s.mux.HandleFunc("POST /api/v1/workflows/{id}/runs", s.handleCreateRun)
+	s.mux.HandleFunc("GET /api/v1/workflows/{id}/runs", s.handleListWorkflowRuns)
+
+	// Runs (cross-workflow)
+	s.mux.HandleFunc("GET /api/v1/runs", s.handleListRuns)
+	s.mux.HandleFunc("GET /api/v1/runs/{run_id}", s.handleGetRun)
+	s.mux.HandleFunc("DELETE /api/v1/runs/{run_id}", s.handleStopRun)
+	s.mux.HandleFunc("GET /api/v1/runs/{run_id}/events", s.handleRunEvents)
+	s.mux.HandleFunc("GET /api/v1/runs/{run_id}/stats", s.handleRunStats)
+
+	// Datasets
+	s.mux.HandleFunc("POST /api/v1/datasets", s.handleCreateDataset)
+	s.mux.HandleFunc("GET /api/v1/datasets", s.handleListDatasets)
+	s.mux.HandleFunc("GET /api/v1/datasets/{id}", s.handleGetDataset)
+	s.mux.HandleFunc("POST /api/v1/datasets/{id}/upload", s.handleUploadDataset)
+	s.mux.HandleFunc("GET /api/v1/datasets/{id}/sample", s.handleSampleDataset)
+	s.mux.HandleFunc("DELETE /api/v1/datasets/{id}", s.handleDeleteDataset)
 
 	// Attacks
 	s.mux.HandleFunc("POST /api/v1/attacks", s.handleCreateAttack)
 	s.mux.HandleFunc("GET /api/v1/attacks", s.handleListAttacks)
 	s.mux.HandleFunc("GET /api/v1/attacks/{id}", s.handleGetAttack)
 	s.mux.HandleFunc("DELETE /api/v1/attacks/{id}", s.handleStopAttack)
+	s.mux.HandleFunc("GET /api/v1/attacks/{id}/stats", s.handleAttackStats)
 
-	// Policies
-	s.mux.HandleFunc("POST /api/v1/policies", s.handleCreatePolicy)
-	s.mux.HandleFunc("GET /api/v1/policies", s.handleListPolicies)
-	s.mux.HandleFunc("DELETE /api/v1/policies/{id}", s.handleDeletePolicy)
+	// Prometheus metrics
+	s.mux.Handle("GET /api/v1/metrics", promhttp.HandlerFor(s.deps.Metrics.Registry(), promhttp.HandlerOpts{}))
+	s.mux.HandleFunc("GET /api/v1/metrics/summary", s.handleMetricsSummary)
 
-	// Status
+	// Health
+	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
+	s.mux.HandleFunc("GET /readyz", s.handleReadyz)
 	s.mux.HandleFunc("GET /api/v1/status", s.handleStatus)
 }
 
@@ -79,16 +113,4 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 func readJSON(r *http.Request, v any) error {
 	body := io.LimitReader(r.Body, maxBodySize)
 	return json.NewDecoder(body).Decode(v)
-}
-
-// --- Status handler ---
-
-func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
-	status := map[string]any{
-		"status":    "ok",
-		"workloads": len(s.registry.List()),
-		"attacks":   len(s.manager.List()),
-		"policies":  len(s.engine.ListRules()),
-	}
-	writeJSON(w, http.StatusOK, status)
 }

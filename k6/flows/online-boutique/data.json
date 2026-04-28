@@ -1,27 +1,673 @@
 {
+  "currencies": [
+    {
+      "code": "USD",
+      "symbol": "$"
+    },
+    {
+      "code": "EUR",
+      "symbol": "€"
+    },
+    {
+      "code": "JPY",
+      "symbol": "¥"
+    },
+    {
+      "code": "CAD",
+      "symbol": "CA$"
+    },
+    {
+      "code": "GBP",
+      "symbol": "£"
+    }
+  ],
   "products": [
-    { "id": "OLJCESPC7Z", "name": "sunglasses" },
-    { "id": "66VCHSJNUP", "name": "tank top" },
-    { "id": "1YMWWN1N4O", "name": "watch" },
-    { "id": "L9ECAV7KIM", "name": "loafers" },
-    { "id": "2ZYFJ3GM2N", "name": "hairdryer" },
-    { "id": "0PUK6V6EV0", "name": "candles" },
-    { "id": "LS4PSXUNUM", "name": "salt & pepper" },
-    { "id": "9SIQT8TOJO", "name": "bamboo glass jar" },
-    { "id": "6E92ZMYYFZ", "name": "mug" }
+    {
+      "id": "OLJCESPC7Z",
+      "name": "sunglasses",
+      "price": 19.99
+    },
+    {
+      "id": "66VCHSJNUP",
+      "name": "tank top",
+      "price": 18.99
+    },
+    {
+      "id": "1YMWWN1N4O",
+      "name": "watch",
+      "price": 109.99
+    },
+    {
+      "id": "L9ECAV7KIM",
+      "name": "loafers",
+      "price": 89.99
+    },
+    {
+      "id": "2ZYFJ3GM2N",
+      "name": "hairdryer",
+      "price": 24.99
+    },
+    {
+      "id": "0PUK6V6EV0",
+      "name": "candles",
+      "price": 3.99
+    },
+    {
+      "id": "LS4PSXUNUM",
+      "name": "salt & pepper",
+      "price": 18.99
+    },
+    {
+      "id": "9SIQT8TOJO",
+      "name": "bamboo glass jar",
+      "price": 5.49
+    },
+    {
+      "id": "6E92ZMYYFZ",
+      "name": "mug",
+      "price": 8.99
+    }
   ],
   "users": [
     {
-      "email": "test@loadgen.local",
-      "street_address": "1600 Amphitheatre Parkway",
-      "zip_code": "94043",
       "city": "Mountain View",
-      "state": "CA",
       "country": "United States",
-      "credit_card_number": "4432-8015-6152-0454",
-      "credit_card_expiration_month": 1,
+      "credit_card_cvv": 769,
+      "credit_card_expiration_month": 10,
+      "credit_card_expiration_year": 2028,
+      "credit_card_number": "4532-2581-4703-6928",
+      "email": "user-1@loadgen.local",
+      "state": "CA",
+      "street_address": "1600 Amphitheatre Parkway",
+      "zip_code": "94043"
+    },
+    {
+      "city": "New York",
+      "country": "United States",
+      "credit_card_cvv": 127,
+      "credit_card_expiration_month": 3,
       "credit_card_expiration_year": 2030,
-      "credit_card_cvv": 672
+      "credit_card_number": "4532-9258-1470-3697",
+      "email": "user-2@loadgen.local",
+      "state": "NY",
+      "street_address": "350 Fifth Avenue",
+      "zip_code": "10118"
+    },
+    {
+      "city": "Cupertino",
+      "country": "United States",
+      "credit_card_cvv": 391,
+      "credit_card_expiration_month": 1,
+      "credit_card_expiration_year": 2028,
+      "credit_card_number": "4532-6925-8147-0369",
+      "email": "user-3@loadgen.local",
+      "state": "CA",
+      "street_address": "1 Infinite Loop",
+      "zip_code": "95014"
+    },
+    {
+      "city": "Chicago",
+      "country": "United States",
+      "credit_card_cvv": 924,
+      "credit_card_expiration_month": 7,
+      "credit_card_expiration_year": 2029,
+      "credit_card_number": "4532-3692-5814-7030",
+      "email": "user-4@loadgen.local",
+      "state": "IL",
+      "street_address": "233 S Wacker Dr",
+      "zip_code": "60606"
+    },
+    {
+      "city": "Seattle",
+      "country": "United States",
+      "credit_card_cvv": 674,
+      "credit_card_expiration_month": 5,
+      "credit_card_expiration_year": 2028,
+      "credit_card_number": "4532-0369-2581-4702",
+      "email": "user-5@loadgen.local",
+      "state": "WA",
+      "street_address": "1000 4th Ave",
+      "zip_code": "98104"
+    },
+    {
+      "city": "Los Angeles",
+      "country": "United States",
+      "credit_card_cvv": 430,
+      "credit_card_expiration_month": 5,
+      "credit_card_expiration_year": 2029,
+      "credit_card_number": "4532-7036-9258-1471",
+      "email": "user-6@loadgen.local",
+      "state": "CA",
+      "street_address": "100 Universal City Plaza",
+      "zip_code": "91608"
+    },
+    {
+      "city": "Boston",
+      "country": "United States",
+      "credit_card_cvv": 385,
+      "credit_card_expiration_month": 6,
+      "credit_card_expiration_year": 2030,
+      "credit_card_number": "4532-4703-6925-8144",
+      "email": "user-7@loadgen.local",
+      "state": "MA",
+      "street_address": "200 Clarendon St",
+      "zip_code": "02116"
+    },
+    {
+      "city": "Austin",
+      "country": "United States",
+      "credit_card_cvv": 619,
+      "credit_card_expiration_month": 2,
+      "credit_card_expiration_year": 2030,
+      "credit_card_number": "4532-1470-3692-5814",
+      "email": "user-8@loadgen.local",
+      "state": "TX",
+      "street_address": "600 Congress Ave",
+      "zip_code": "78701"
+    },
+    {
+      "city": "Menlo Park",
+      "country": "United States",
+      "credit_card_cvv": 643,
+      "credit_card_expiration_month": 4,
+      "credit_card_expiration_year": 2030,
+      "credit_card_number": "4532-8147-0369-2585",
+      "email": "user-9@loadgen.local",
+      "state": "CA",
+      "street_address": "1 Hacker Way",
+      "zip_code": "94025"
+    },
+    {
+      "city": "Seattle",
+      "country": "United States",
+      "credit_card_cvv": 690,
+      "credit_card_expiration_month": 1,
+      "credit_card_expiration_year": 2027,
+      "credit_card_number": "4532-5814-7036-9255",
+      "email": "user-10@loadgen.local",
+      "state": "WA",
+      "street_address": "410 Terry Ave N",
+      "zip_code": "98109"
+    },
+    {
+      "city": "Mountain View",
+      "country": "United States",
+      "credit_card_cvv": 935,
+      "credit_card_expiration_month": 6,
+      "credit_card_expiration_year": 2028,
+      "credit_card_number": "4532-2581-4703-6928",
+      "email": "user-11@loadgen.local",
+      "state": "CA",
+      "street_address": "1600 Amphitheatre Parkway",
+      "zip_code": "94043"
+    },
+    {
+      "city": "New York",
+      "country": "United States",
+      "credit_card_cvv": 314,
+      "credit_card_expiration_month": 6,
+      "credit_card_expiration_year": 2028,
+      "credit_card_number": "4532-9258-1470-3697",
+      "email": "user-12@loadgen.local",
+      "state": "NY",
+      "street_address": "350 Fifth Avenue",
+      "zip_code": "10118"
+    },
+    {
+      "city": "Cupertino",
+      "country": "United States",
+      "credit_card_cvv": 105,
+      "credit_card_expiration_month": 9,
+      "credit_card_expiration_year": 2028,
+      "credit_card_number": "4532-6925-8147-0369",
+      "email": "user-13@loadgen.local",
+      "state": "CA",
+      "street_address": "1 Infinite Loop",
+      "zip_code": "95014"
+    },
+    {
+      "city": "Chicago",
+      "country": "United States",
+      "credit_card_cvv": 805,
+      "credit_card_expiration_month": 12,
+      "credit_card_expiration_year": 2027,
+      "credit_card_number": "4532-3692-5814-7030",
+      "email": "user-14@loadgen.local",
+      "state": "IL",
+      "street_address": "233 S Wacker Dr",
+      "zip_code": "60606"
+    },
+    {
+      "city": "Seattle",
+      "country": "United States",
+      "credit_card_cvv": 327,
+      "credit_card_expiration_month": 5,
+      "credit_card_expiration_year": 2028,
+      "credit_card_number": "4532-0369-2581-4702",
+      "email": "user-15@loadgen.local",
+      "state": "WA",
+      "street_address": "1000 4th Ave",
+      "zip_code": "98104"
+    },
+    {
+      "city": "Los Angeles",
+      "country": "United States",
+      "credit_card_cvv": 579,
+      "credit_card_expiration_month": 7,
+      "credit_card_expiration_year": 2030,
+      "credit_card_number": "4532-7036-9258-1471",
+      "email": "user-16@loadgen.local",
+      "state": "CA",
+      "street_address": "100 Universal City Plaza",
+      "zip_code": "91608"
+    },
+    {
+      "city": "Boston",
+      "country": "United States",
+      "credit_card_cvv": 281,
+      "credit_card_expiration_month": 3,
+      "credit_card_expiration_year": 2030,
+      "credit_card_number": "4532-4703-6925-8144",
+      "email": "user-17@loadgen.local",
+      "state": "MA",
+      "street_address": "200 Clarendon St",
+      "zip_code": "02116"
+    },
+    {
+      "city": "Austin",
+      "country": "United States",
+      "credit_card_cvv": 891,
+      "credit_card_expiration_month": 8,
+      "credit_card_expiration_year": 2027,
+      "credit_card_number": "4532-1470-3692-5814",
+      "email": "user-18@loadgen.local",
+      "state": "TX",
+      "street_address": "600 Congress Ave",
+      "zip_code": "78701"
+    },
+    {
+      "city": "Menlo Park",
+      "country": "United States",
+      "credit_card_cvv": 397,
+      "credit_card_expiration_month": 12,
+      "credit_card_expiration_year": 2028,
+      "credit_card_number": "4532-8147-0369-2585",
+      "email": "user-19@loadgen.local",
+      "state": "CA",
+      "street_address": "1 Hacker Way",
+      "zip_code": "94025"
+    },
+    {
+      "city": "Seattle",
+      "country": "United States",
+      "credit_card_cvv": 919,
+      "credit_card_expiration_month": 9,
+      "credit_card_expiration_year": 2028,
+      "credit_card_number": "4532-5814-7036-9255",
+      "email": "user-20@loadgen.local",
+      "state": "WA",
+      "street_address": "410 Terry Ave N",
+      "zip_code": "98109"
+    },
+    {
+      "city": "Mountain View",
+      "country": "United States",
+      "credit_card_cvv": 319,
+      "credit_card_expiration_month": 8,
+      "credit_card_expiration_year": 2030,
+      "credit_card_number": "4532-2581-4703-6928",
+      "email": "user-21@loadgen.local",
+      "state": "CA",
+      "street_address": "1600 Amphitheatre Parkway",
+      "zip_code": "94043"
+    },
+    {
+      "city": "New York",
+      "country": "United States",
+      "credit_card_cvv": 420,
+      "credit_card_expiration_month": 10,
+      "credit_card_expiration_year": 2027,
+      "credit_card_number": "4532-9258-1470-3697",
+      "email": "user-22@loadgen.local",
+      "state": "NY",
+      "street_address": "350 Fifth Avenue",
+      "zip_code": "10118"
+    },
+    {
+      "city": "Cupertino",
+      "country": "United States",
+      "credit_card_cvv": 842,
+      "credit_card_expiration_month": 4,
+      "credit_card_expiration_year": 2027,
+      "credit_card_number": "4532-6925-8147-0369",
+      "email": "user-23@loadgen.local",
+      "state": "CA",
+      "street_address": "1 Infinite Loop",
+      "zip_code": "95014"
+    },
+    {
+      "city": "Chicago",
+      "country": "United States",
+      "credit_card_cvv": 141,
+      "credit_card_expiration_month": 4,
+      "credit_card_expiration_year": 2030,
+      "credit_card_number": "4532-3692-5814-7030",
+      "email": "user-24@loadgen.local",
+      "state": "IL",
+      "street_address": "233 S Wacker Dr",
+      "zip_code": "60606"
+    },
+    {
+      "city": "Seattle",
+      "country": "United States",
+      "credit_card_cvv": 759,
+      "credit_card_expiration_month": 7,
+      "credit_card_expiration_year": 2029,
+      "credit_card_number": "4532-0369-2581-4702",
+      "email": "user-25@loadgen.local",
+      "state": "WA",
+      "street_address": "1000 4th Ave",
+      "zip_code": "98104"
+    },
+    {
+      "city": "Los Angeles",
+      "country": "United States",
+      "credit_card_cvv": 126,
+      "credit_card_expiration_month": 8,
+      "credit_card_expiration_year": 2027,
+      "credit_card_number": "4532-7036-9258-1471",
+      "email": "user-26@loadgen.local",
+      "state": "CA",
+      "street_address": "100 Universal City Plaza",
+      "zip_code": "91608"
+    },
+    {
+      "city": "Boston",
+      "country": "United States",
+      "credit_card_cvv": 653,
+      "credit_card_expiration_month": 2,
+      "credit_card_expiration_year": 2030,
+      "credit_card_number": "4532-4703-6925-8144",
+      "email": "user-27@loadgen.local",
+      "state": "MA",
+      "street_address": "200 Clarendon St",
+      "zip_code": "02116"
+    },
+    {
+      "city": "Austin",
+      "country": "United States",
+      "credit_card_cvv": 308,
+      "credit_card_expiration_month": 3,
+      "credit_card_expiration_year": 2030,
+      "credit_card_number": "4532-1470-3692-5814",
+      "email": "user-28@loadgen.local",
+      "state": "TX",
+      "street_address": "600 Congress Ave",
+      "zip_code": "78701"
+    },
+    {
+      "city": "Menlo Park",
+      "country": "United States",
+      "credit_card_cvv": 896,
+      "credit_card_expiration_month": 10,
+      "credit_card_expiration_year": 2027,
+      "credit_card_number": "4532-8147-0369-2585",
+      "email": "user-29@loadgen.local",
+      "state": "CA",
+      "street_address": "1 Hacker Way",
+      "zip_code": "94025"
+    },
+    {
+      "city": "Seattle",
+      "country": "United States",
+      "credit_card_cvv": 492,
+      "credit_card_expiration_month": 9,
+      "credit_card_expiration_year": 2028,
+      "credit_card_number": "4532-5814-7036-9255",
+      "email": "user-30@loadgen.local",
+      "state": "WA",
+      "street_address": "410 Terry Ave N",
+      "zip_code": "98109"
+    },
+    {
+      "city": "Mountain View",
+      "country": "United States",
+      "credit_card_cvv": 995,
+      "credit_card_expiration_month": 5,
+      "credit_card_expiration_year": 2027,
+      "credit_card_number": "4532-2581-4703-6928",
+      "email": "user-31@loadgen.local",
+      "state": "CA",
+      "street_address": "1600 Amphitheatre Parkway",
+      "zip_code": "94043"
+    },
+    {
+      "city": "New York",
+      "country": "United States",
+      "credit_card_cvv": 105,
+      "credit_card_expiration_month": 11,
+      "credit_card_expiration_year": 2029,
+      "credit_card_number": "4532-9258-1470-3697",
+      "email": "user-32@loadgen.local",
+      "state": "NY",
+      "street_address": "350 Fifth Avenue",
+      "zip_code": "10118"
+    },
+    {
+      "city": "Cupertino",
+      "country": "United States",
+      "credit_card_cvv": 385,
+      "credit_card_expiration_month": 11,
+      "credit_card_expiration_year": 2028,
+      "credit_card_number": "4532-6925-8147-0369",
+      "email": "user-33@loadgen.local",
+      "state": "CA",
+      "street_address": "1 Infinite Loop",
+      "zip_code": "95014"
+    },
+    {
+      "city": "Chicago",
+      "country": "United States",
+      "credit_card_cvv": 179,
+      "credit_card_expiration_month": 11,
+      "credit_card_expiration_year": 2028,
+      "credit_card_number": "4532-3692-5814-7030",
+      "email": "user-34@loadgen.local",
+      "state": "IL",
+      "street_address": "233 S Wacker Dr",
+      "zip_code": "60606"
+    },
+    {
+      "city": "Seattle",
+      "country": "United States",
+      "credit_card_cvv": 706,
+      "credit_card_expiration_month": 9,
+      "credit_card_expiration_year": 2029,
+      "credit_card_number": "4532-0369-2581-4702",
+      "email": "user-35@loadgen.local",
+      "state": "WA",
+      "street_address": "1000 4th Ave",
+      "zip_code": "98104"
+    },
+    {
+      "city": "Los Angeles",
+      "country": "United States",
+      "credit_card_cvv": 831,
+      "credit_card_expiration_month": 12,
+      "credit_card_expiration_year": 2030,
+      "credit_card_number": "4532-7036-9258-1471",
+      "email": "user-36@loadgen.local",
+      "state": "CA",
+      "street_address": "100 Universal City Plaza",
+      "zip_code": "91608"
+    },
+    {
+      "city": "Boston",
+      "country": "United States",
+      "credit_card_cvv": 869,
+      "credit_card_expiration_month": 12,
+      "credit_card_expiration_year": 2030,
+      "credit_card_number": "4532-4703-6925-8144",
+      "email": "user-37@loadgen.local",
+      "state": "MA",
+      "street_address": "200 Clarendon St",
+      "zip_code": "02116"
+    },
+    {
+      "city": "Austin",
+      "country": "United States",
+      "credit_card_cvv": 384,
+      "credit_card_expiration_month": 1,
+      "credit_card_expiration_year": 2027,
+      "credit_card_number": "4532-1470-3692-5814",
+      "email": "user-38@loadgen.local",
+      "state": "TX",
+      "street_address": "600 Congress Ave",
+      "zip_code": "78701"
+    },
+    {
+      "city": "Menlo Park",
+      "country": "United States",
+      "credit_card_cvv": 485,
+      "credit_card_expiration_month": 3,
+      "credit_card_expiration_year": 2028,
+      "credit_card_number": "4532-8147-0369-2585",
+      "email": "user-39@loadgen.local",
+      "state": "CA",
+      "street_address": "1 Hacker Way",
+      "zip_code": "94025"
+    },
+    {
+      "city": "Seattle",
+      "country": "United States",
+      "credit_card_cvv": 873,
+      "credit_card_expiration_month": 4,
+      "credit_card_expiration_year": 2030,
+      "credit_card_number": "4532-5814-7036-9255",
+      "email": "user-40@loadgen.local",
+      "state": "WA",
+      "street_address": "410 Terry Ave N",
+      "zip_code": "98109"
+    },
+    {
+      "city": "Mountain View",
+      "country": "United States",
+      "credit_card_cvv": 792,
+      "credit_card_expiration_month": 12,
+      "credit_card_expiration_year": 2030,
+      "credit_card_number": "4532-2581-4703-6928",
+      "email": "user-41@loadgen.local",
+      "state": "CA",
+      "street_address": "1600 Amphitheatre Parkway",
+      "zip_code": "94043"
+    },
+    {
+      "city": "New York",
+      "country": "United States",
+      "credit_card_cvv": 305,
+      "credit_card_expiration_month": 9,
+      "credit_card_expiration_year": 2030,
+      "credit_card_number": "4532-9258-1470-3697",
+      "email": "user-42@loadgen.local",
+      "state": "NY",
+      "street_address": "350 Fifth Avenue",
+      "zip_code": "10118"
+    },
+    {
+      "city": "Cupertino",
+      "country": "United States",
+      "credit_card_cvv": 167,
+      "credit_card_expiration_month": 1,
+      "credit_card_expiration_year": 2027,
+      "credit_card_number": "4532-6925-8147-0369",
+      "email": "user-43@loadgen.local",
+      "state": "CA",
+      "street_address": "1 Infinite Loop",
+      "zip_code": "95014"
+    },
+    {
+      "city": "Chicago",
+      "country": "United States",
+      "credit_card_cvv": 354,
+      "credit_card_expiration_month": 4,
+      "credit_card_expiration_year": 2028,
+      "credit_card_number": "4532-3692-5814-7030",
+      "email": "user-44@loadgen.local",
+      "state": "IL",
+      "street_address": "233 S Wacker Dr",
+      "zip_code": "60606"
+    },
+    {
+      "city": "Seattle",
+      "country": "United States",
+      "credit_card_cvv": 721,
+      "credit_card_expiration_month": 2,
+      "credit_card_expiration_year": 2027,
+      "credit_card_number": "4532-0369-2581-4702",
+      "email": "user-45@loadgen.local",
+      "state": "WA",
+      "street_address": "1000 4th Ave",
+      "zip_code": "98104"
+    },
+    {
+      "city": "Los Angeles",
+      "country": "United States",
+      "credit_card_cvv": 195,
+      "credit_card_expiration_month": 12,
+      "credit_card_expiration_year": 2029,
+      "credit_card_number": "4532-7036-9258-1471",
+      "email": "user-46@loadgen.local",
+      "state": "CA",
+      "street_address": "100 Universal City Plaza",
+      "zip_code": "91608"
+    },
+    {
+      "city": "Boston",
+      "country": "United States",
+      "credit_card_cvv": 978,
+      "credit_card_expiration_month": 9,
+      "credit_card_expiration_year": 2030,
+      "credit_card_number": "4532-4703-6925-8144",
+      "email": "user-47@loadgen.local",
+      "state": "MA",
+      "street_address": "200 Clarendon St",
+      "zip_code": "02116"
+    },
+    {
+      "city": "Austin",
+      "country": "United States",
+      "credit_card_cvv": 513,
+      "credit_card_expiration_month": 9,
+      "credit_card_expiration_year": 2027,
+      "credit_card_number": "4532-1470-3692-5814",
+      "email": "user-48@loadgen.local",
+      "state": "TX",
+      "street_address": "600 Congress Ave",
+      "zip_code": "78701"
+    },
+    {
+      "city": "Menlo Park",
+      "country": "United States",
+      "credit_card_cvv": 183,
+      "credit_card_expiration_month": 10,
+      "credit_card_expiration_year": 2028,
+      "credit_card_number": "4532-8147-0369-2585",
+      "email": "user-49@loadgen.local",
+      "state": "CA",
+      "street_address": "1 Hacker Way",
+      "zip_code": "94025"
+    },
+    {
+      "city": "Seattle",
+      "country": "United States",
+      "credit_card_cvv": 796,
+      "credit_card_expiration_month": 12,
+      "credit_card_expiration_year": 2030,
+      "credit_card_number": "4532-5814-7036-9255",
+      "email": "user-50@loadgen.local",
+      "state": "WA",
+      "street_address": "410 Terry Ave N",
+      "zip_code": "98109"
     }
   ]
 }

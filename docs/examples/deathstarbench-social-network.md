@@ -1,40 +1,61 @@
 # Death Star Bench — Social Network Workflow Example
 
-This document demonstrates what a realistic workflow looks like in the Zeus DSL v2. The target is DeathStarBench's Social Network benchmark: a microservice application fronted by an NGINX gateway that exposes Thrift RPC endpoints over HTTP.
+This example **targets DSB's service topology** — a microservice application with Thrift RPC fronted by an NGINX gateway — but **uses a workload model more expressive than DSB's own wrk2 scripts**. The point is to show what Zeus DSL v2 can express on a richer dependency graph than online-boutique offers. DSB's actual wrk2 workload is flatter than the session below and is summarized in the next section so readers aren't misled into thinking DSB itself runs a 7-step choreographed session.
 
-Online-boutique is a 4-step browse with a single user and 9 products. It validates the engine but does not exercise the DSL. This example is deeper: multi-step dependent sessions, parallel fan-out, weighted body variants, cross-step data extraction, and realistic think-time placement.
+What this example exercises in DSL v2: multi-step dependent sessions, parallel fan-out, weighted body variants, cross-step data extraction, and realistic think-time placement.
 
 ## Target benchmark
 
-DeathStarBench (ASPLOS 2019, Cornell/Berkeley) is an open-source microservice benchmark suite. The Social Network sub-benchmark is the most widely cited and has the richest dependency graph. Services communicate via Thrift RPC; an NGINX container fronts the public HTTP gateway. The canonical wrk2 Lua scripts drive traffic against the HTTP endpoints.
+DeathStarBench (ASPLOS 2019, Cornell/Berkeley) is an open-source microservice benchmark suite. The Social Network sub-benchmark has the richest dependency graph of the suite: services communicate via Thrift RPC, an NGINX container fronts the public HTTP gateway, and a single user-facing request (e.g., compose-post) fans out through ~10 internal services.
 
-Reference repository: `delimitrou/DeathStarBench` on GitHub. Reference endpoints are documented in `socialNetwork/wrk2/scripts/*.lua` and the Thrift IDL at `socialNetwork/social_network.thrift`.
+Reference repository: `delimitrou/DeathStarBench` on GitHub. Service definitions live in `socialNetwork/social_network.thrift`. DSB's load scripts live in `socialNetwork/wrk2/scripts/social-network/` (covered in detail below).
+
+## How DSB actually loads its workload
+
+DSB's published load scripts are **flat, stateless, and single-endpoint per invocation** — the opposite of the session-structured workload in the next section. This distinction matters because the two models are answering different questions.
+
+- **Four wrk2 Lua scripts**, each hitting one endpoint per request:
+  - `compose-post.lua` — `POST /wrk2-api/post/compose` with a randomly selected user ID, random text, optional media and URLs.
+  - `read-home-timeline.lua` — `GET /wrk2-api/home-timeline/read` with a random user ID.
+  - `read-user-timeline.lua` — `GET /wrk2-api/user-timeline/read` with a random user ID.
+  - `mixed-workload.lua` — a per-request coin flip, 60% home-timeline / 30% user-timeline / 10% compose. No session state across the sampled requests.
+- **No login, no auth tokens, no cross-request extract chaining.** Every request stands alone. There is no session handshake that produces a token reused by later requests.
+- **User IDs are drawn uniformly at random per request** via `math.random(0, max_user_index - 1)`. The graph is pre-seeded by `init_social_graph.py`, which ingests static datasets — the default is Reed98 from the SNAP / Facebook100 collection (~962 users) — and bulk-registers users plus follow edges before the run starts.
+- **Methodological goal: coordinated-omission-free tail-latency under a constant arrival rate.** wrk2 keeps a fixed request rate independent of server response time (unlike closed-loop tools) so high-latency outliers can be measured without the classical think-time feedback loop hiding them. The flat per-request model is *intentional* for this purpose — it isolates the synchronous RPC fan-out path from session-level behavior.
+
+The workflow in this example picks up from a different angle: rather than tail-latency on a single fan-out, it models a structured user session so that correlated behaviors (parallel follows before a compose, variant body mix, post-compose engagement loop) are captured at a load-driver level. Both shapes are expressible in DSL v2 — DSB's flat mixed-workload is a one-step workflow; this document's session is many steps.
 
 ## Services hit
 
-| Service | Role | Endpoint(s) |
-|---|---|---|
-| `nginx-thrift` | HTTP gateway, routes to Thrift backends | All `/wrk2-api/*` |
-| `user-service` | User registration, login, auth | `/wrk2-api/user/register`, `/wrk2-api/user/login` |
-| `social-graph-service` | Follow/unfollow relationships | `/wrk2-api/user/follow`, `/wrk2-api/user/unfollow` |
-| `compose-post-service` | Post creation, text parsing, media, mentions, fan-out | `/wrk2-api/post/compose` |
-| `home-timeline-service` | Read aggregated timeline from followed users | `/wrk2-api/home-timeline/read` |
-| `user-timeline-service` | Read a single user's post history | `/wrk2-api/user-timeline/read` |
-| `post-storage-service` | Post persistence (MongoDB) | Internal, called by compose and timeline services |
-| `media-service` | Media attachment handling | Internal |
-| `text-service` | Text parsing (mentions, URLs) | Internal |
-| `url-shorten-service` | URL shortening for embedded links | Internal |
+The **Source** column distinguishes endpoints driven by DSB's own wrk2 scripts, endpoints added by this example's richer session model, and endpoints invoked only during initial graph setup (not under load).
+
+| Service | Role | Endpoint(s) | Source |
+|---|---|---|---|
+| `nginx-thrift` | HTTP gateway, routes to Thrift backends | All `/wrk2-api/*` | shared |
+| `user-service` | Registration, login, auth | `/wrk2-api/user/register` | init-only (via `init_social_graph.py`) |
+| `user-service` | (same) | `/wrk2-api/user/login` | added by this example (not in DSB wrk2) |
+| `social-graph-service` | Follow/unfollow relationships | `/wrk2-api/user/follow` | init-only in DSB (bulk-loaded from the social graph); driven under load in this example |
+| `social-graph-service` | (same) | `/wrk2-api/user/unfollow` | not used here; noted for completeness |
+| `compose-post-service` | Post creation, text parsing, media, mentions, fan-out | `/wrk2-api/post/compose` | in DSB wrk2 (`compose-post.lua`, `mixed-workload.lua`) |
+| `home-timeline-service` | Aggregated timeline read | `/wrk2-api/home-timeline/read` | in DSB wrk2 (`read-home-timeline.lua`, `mixed-workload.lua`) |
+| `user-timeline-service` | Single-user post history | `/wrk2-api/user-timeline/read` | in DSB wrk2 (`read-user-timeline.lua`, `mixed-workload.lua`) |
+| `post-storage-service` | Post persistence (MongoDB) | Internal, called by compose and timeline services | internal |
+| `media-service` | Media attachment handling | Internal | internal |
+| `text-service` | Text parsing (mentions, URLs) | Internal | internal |
+| `url-shorten-service` | URL shortening for embedded links | Internal | internal |
 
 The workflow only hits `nginx-thrift` — the internal service calls are invisible to the load driver but visible in OTel traces, which is exactly where atropos observes them.
 
-## Canonical user session
+## A richer session than DSB's wrk2 runs
 
-A typical social-network user session in this benchmark:
+DSB's wrk2 scripts do not choreograph the sequence below. What follows is what a social-network benchmark **could** look like under a DSL that supports session state, parallel fan-out, and weighted body variants — the DSB topology is reused here because its fan-out graph is deeper than online-boutique's, not because DSB itself runs multi-step sessions.
 
-1. **Login** (required). POST credentials, extract auth token.
+A session-structured social-network workload:
+
+1. **Login** (required; added by this example — DSB's wrk2 does not authenticate). POST credentials, extract auth token. Assumes a user-service login endpoint outside the wrk2-driven surface.
 2. **Read home timeline** (required). GET the aggregated feed. This is the heaviest read path: it fans out through social-graph → post-storage → cache.
 3. **Maybe read a specific user's timeline** (60%). A secondary read that exercises user-timeline-service independently.
-4. **Follow two users in parallel** (required, fanned out). Two concurrent POST requests to social-graph-service. Demonstrates `parallel` with `wait: all`.
+4. **Follow two users in parallel** (required, fanned out). Two concurrent POST requests to social-graph-service. Demonstrates `parallel` with `wait: all`. Note: DSB bulk-loads the follow graph once at init time via `init_social_graph.py`; invoking `/follow` under load is a choice specific to this example.
 5. **Pause 1.5–3 seconds.** Realistic think-time before composing.
 6. **Compose a post** (required, with four weighted body variants). The core write path: compose fans out to text-service, media-service, user-service (mention validation), post-storage, and home-timeline (fan-out to followers). Body variants model the realistic mix of short text posts, media posts, replies, and DMs.
 7. **Maybe like the post and optionally reshare** (40%, nested 50%). An optional engagement sequence that extracts the composed post's ID and feeds it back.
@@ -318,11 +339,11 @@ Needed only by variant 2 (reply). If absent, variant 2 degrades: `{{data.reply_t
 
 ## Where manteion sources this data
 
-The data pool sources tie back to the three-signal strategy in `VISION.md`:
+The data pool sources tie back to the three-signal strategy in `VISION.md`. DSB's own init flow (`init_social_graph.py` seeding a static graph from SNAP / Facebook100 datasets) is the real-world counterpart to what manteion automates here — manteion just uses cache-box captures of observed traffic instead of pre-bundled static datasets.
 
-- **`users` pool:** Projected from cache-box dumps of past `POST /wrk2-api/user/register` responses. Each register response body contains the `user_id` and `username`. Manteion reads the cache-box export, groups entries by the register endpoint, parses the stored bodies, deduplicates by `user_id`, and enriches with `region` from trace attributes (or synthesizes it). The `follow_ids` array is populated from the social-graph-service's cache-box entries for the `/follow` endpoint (extracting `followee_id` per `user_id`).
+- **`users` pool:** Projected from cache-box dumps of past `POST /wrk2-api/user/register` responses. Each register response body contains the `user_id` and `username`. Manteion reads the cache-box export, groups entries by the register endpoint, parses the stored bodies, deduplicates by `user_id`, and enriches with `region` from trace attributes (or synthesizes it). The `follow_ids` array is populated from the social-graph-service's cache-box entries for the `/follow` endpoint (extracting `followee_id` per `user_id`). Source caveat: the register endpoint is not in DSB's wrk2 load surface, so cache-box would hold entries only from prior setup workflows that drove registrations — either this project's own init workflow or an instrumented replay of DSB's `init_social_graph.py`.
 
-- **`posts` pool:** Projected from cache-box dumps of past `POST /wrk2-api/post/compose` requests. Manteion reads the `text` field from each cached compose request body and uses it as a `body_template`. Deduplication is optional since post texts naturally vary.
+- **`posts` pool:** Projected from cache-box dumps of past `POST /wrk2-api/post/compose` requests. Manteion reads the `text` field from each cached compose request body and uses it as a `body_template`. Deduplication is optional since post texts naturally vary. This endpoint **is** driven by DSB's wrk2 (`compose-post.lua`), so a cache-box attached during a wrk2 run will populate this pool directly.
 
 - **`reply_targets` pool:** Projected from cache-box dumps of compose requests where `post_type == 2` (reply). Each reply's original `text` mentions a `@username` and references a `post_id`.
 
@@ -342,7 +363,8 @@ Cache-box gives the body content. OTel traces give the endpoint ordering (which 
 
 These are deliberate scope exclusions. The DSL can express all of them; the example omits them for clarity.
 
-- **User registration flow.** In a real experiment, a setup workflow (run once before the main load) registers 200+ users. This example assumes users already exist.
+- **DSB's own flat wrk2 workload.** The coin-flip mixed pattern (60% home-timeline / 30% user-timeline / 10% compose) published by DSB is appropriate for coordinated-omission-free tail-latency under synchronous RPC fan-out. This example is appropriate for modeling realistic user sessions. Both are expressible in DSL v2 — DSB's is a one-step `request` workflow wrapped in a variants list at 60/30/10 weights, and could be added as a sibling example for methodological comparison.
+- **User registration flow.** In a real experiment, a setup workflow (run once before the main load) registers 200+ users. This example assumes users already exist — which is also what DSB does via `init_social_graph.py`.
 - **Media upload.** Variant 1 passes `media_ids: [1]` as if media were pre-uploaded. A full model would have a prior step `POST /wrk2-api/media/upload` that returns the media ID.
 - **Search and recommendations.** `GET /wrk2-api/user/search` and `GET /wrk2-api/recommendation` are valid read paths but not included.
 - **Multi-session state persistence.** This workflow is stateless across VU iterations. A user who followed Alice in iteration 1 will try to follow her again in iteration 2. The social-graph-service handles the idempotency, but the load profile does not model "I only follow new users."

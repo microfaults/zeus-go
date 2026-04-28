@@ -49,7 +49,7 @@ REST API for managing attacks and policy rules.
 
 ### k6 (load generation sidecars)
 
-A generic, config-driven k6 runner with a DSL v2 tree-walking engine. Test scenarios are defined entirely in JSON using 5 node types: `sequence`, `parallel`, `delay`, `optional`, `request`.
+A generic, config-driven k6 runner with a DSL v2 tree-walking engine. Test scenarios are defined entirely in JSON using 7 node types: `sequence`, `parallel`, `delay`, `optional`, `request`, `repeat`, `if`.
 
 **Flows** (`k6/flows/`) define node trees with scoped extracts, variants, and delays:
 
@@ -138,12 +138,18 @@ ZEUS_ADDR=:9090 ./zeus
 ## Project Structure
 
 ```
-cmd/zeus/            Entry point
+cmd/
+  zeus/              Entry point
+  gen-dataset/       Synthetic dataset generator (NDJSON + JSON output)
 internal/
   api/               HTTP handlers and routing
   attacker/          Vegeta attack orchestration
-  policy/            Rule engine with metric-based triggers
-  workload/          In-memory workload registry
+  workflow/          Workflow store, DSL v2 types, schema validation
+  run/               Run lifecycle, state machine, filtered store
+  dataset/           Dataset store with go-cache TTL, NDJSON ingest
+  stats/             Prometheus custom registry, run snapshots
+  sse/               SSE event broker for live run tailing
+  id/                Shared cryptographic hex ID generation
   dedup/             Idempotency bypass strategies (header, query)
   trace/             W3C Baggage header helpers
 k6/

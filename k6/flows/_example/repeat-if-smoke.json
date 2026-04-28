@@ -1,0 +1,80 @@
+{
+  "$schema": "https://faults-lab.dev/zeus/workflow.schema.json",
+  "version": "2",
+  "name": "repeat-if-smoke",
+  "description": "DSL v2 smoke test exercising repeat (count + while-max) and if (then + else).",
+  "targets": ["httpbin"],
+  "base_url": "https://httpbin.org",
+  "default_delay": { "min_ms": 50, "max_ms": 150 },
+  "thresholds": {
+    "http_req_failed": ["rate<0.1"]
+  },
+  "data_schema": {
+    "pools": {
+      "users": { "fields": ["id"], "min_size": 1 }
+    }
+  },
+  "root": {
+    "type": "sequence",
+    "id": "session",
+    "children": [
+      {
+        "type": "request",
+        "id": "get-uuid",
+        "method": "GET",
+        "path": "/uuid",
+        "expect": { "status": [200] },
+        "extract": { "uuid": "jsonpath:$.uuid" }
+      },
+      {
+        "type": "if",
+        "condition": "{{steps.get-uuid.uuid}}",
+        "then": {
+          "type": "request",
+          "id": "echo-truthy",
+          "method": "GET",
+          "path": "/get?branch=then&uuid={{steps.get-uuid.uuid}}",
+          "expect": { "status": [200] }
+        },
+        "else": {
+          "type": "request",
+          "id": "echo-falsy",
+          "method": "GET",
+          "path": "/get?branch=else",
+          "expect": { "status": [200] }
+        }
+      },
+      {
+        "type": "if",
+        "condition": "{{steps.get-uuid.nonexistent}}",
+        "then": {
+          "type": "request",
+          "id": "should-not-run",
+          "method": "GET",
+          "path": "/status/500",
+          "expect": { "status": [500] }
+        },
+        "else": {
+          "type": "request",
+          "id": "falsy-branch-ran",
+          "method": "GET",
+          "path": "/get?branch=else-on-missing-key",
+          "expect": { "status": [200] }
+        }
+      },
+      {
+        "type": "repeat",
+        "id": "fetch-loop",
+        "count": 3,
+        "child": {
+          "type": "request",
+          "id": "fetch",
+          "method": "GET",
+          "path": "/get?i={{random_int(1,100)}}",
+          "expect": { "status": [200] },
+          "extract": { "iter_url": "jsonpath:$.url" }
+        }
+      }
+    ]
+  }
+}

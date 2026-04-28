@@ -9,7 +9,7 @@ services:
     environment:
       - ZEUS_ADDR=:8080
 
-  # k6 sidecar: browsing workload (cautious persona).
+  # k6 sidecar: browsing workflow (cautious persona).
   # Uses the generic config-driven runner with DSL v2 flows.
   k6-browse:
     build:
@@ -27,7 +27,7 @@ services:
       - zeus
     restart: "no"
 
-  # k6 sidecar: checkout workload (aggressive persona).
+  # k6 sidecar: checkout workflow (aggressive persona).
   k6-checkout:
     build:
       context: ./k6

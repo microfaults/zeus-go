@@ -1,8 +1,8 @@
 /**
  * zeus.js - Zeus service client for k6.
  *
- * Replaces archer.js. In DSL v2, zeus owns the run lifecycle; k6 does
- * not self-register as a workload. This module provides:
+ * In DSL v2, zeus owns the run lifecycle; k6 does not self-register.
+ * This module provides:
  *   - waitForZeus(): health-check polling for init container readiness
  *   - fetchDataset(): fetch dataset from zeus API
  *   - triggerAttack() / getAttackStatus(): precision attack control
@@ -18,6 +18,10 @@ const RETRY_INTERVAL_S = 3;
 /**
  * Retry wrapper for setup-phase calls that must succeed.
  * Zeus may not be ready yet when k6 Jobs start.
+ *
+ * @param {Function} fn - Function to retry; returns non-null on success
+ * @param {string} label - Log label for diagnostics
+ * @returns {*} The return value of fn, or throws after exhausting retries
  */
 function withRetry(fn, label) {
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
@@ -27,13 +31,14 @@ function withRetry(fn, label) {
     } catch (_e) {
       // fall through to retry
     }
-    console.warn(
-      `${label}: attempt ${attempt}/${MAX_RETRIES} failed, retrying in ${RETRY_INTERVAL_S}s...`
-    );
-    sleep(RETRY_INTERVAL_S);
+    if (attempt < MAX_RETRIES) {
+      console.warn(
+        `${label}: attempt ${attempt}/${MAX_RETRIES} failed, retrying in ${RETRY_INTERVAL_S}s...`
+      );
+      sleep(RETRY_INTERVAL_S);
+    }
   }
-  console.error(`${label}: all ${MAX_RETRIES} attempts failed`);
-  return null;
+  throw new Error(`${label}: all ${MAX_RETRIES} attempts exhausted`);
 }
 
 /**
@@ -42,8 +47,7 @@ function withRetry(fn, label) {
 export function waitForZeus() {
   return withRetry(() => {
     const res = http.get(`${ZEUS_URL}/healthz`);
-    if (res.status === 200) return true;
-    return undefined;
+    return res.status === 200 ? true : undefined;
   }, "waitForZeus");
 }
 
@@ -51,7 +55,8 @@ export function waitForZeus() {
  * Fetch a dataset from zeus's dataset store.
  *
  * @param {string} endpoint - Full URL to the dataset endpoint
- * @returns {Object|null} Parsed dataset JSON, or null on failure
+ * @returns {Object} Parsed dataset JSON
+ * @throws {Error} After MAX_RETRIES failures
  */
 export function fetchDataset(endpoint) {
   return withRetry(() => {
@@ -67,7 +72,8 @@ export function fetchDataset(endpoint) {
  * Trigger a targeted vegeta attack via zeus.
  *
  * @param {Object} config - Attack configuration
- * @returns {Object} The attack object with status
+ * @returns {Object} The attack object with id, status, started_at
+ * @throws {Error} If zeus rejects the attack (non-202)
  */
 export function triggerAttack(config) {
   const res = http.post(
@@ -75,19 +81,26 @@ export function triggerAttack(config) {
     JSON.stringify(config),
     { headers: { "Content-Type": "application/json" } }
   );
-  check(res, {
+  const accepted = check(res, {
     "attack accepted (202)": (r) => r.status === 202,
   });
+  if (!accepted) {
+    throw new Error(`triggerAttack failed: HTTP ${res.status} — ${res.body}`);
+  }
   return JSON.parse(res.body);
 }
 
 /**
  * Check the status of a running attack.
  *
- * @param {string} id - Attack ID
+ * @param {string} attackID - Attack ID
  * @returns {Object} Attack status and results
+ * @throws {Error} If the attack is not found (non-200)
  */
-export function getAttackStatus(id) {
-  const res = http.get(`${ZEUS_URL}/api/v1/attacks/${id}`);
+export function getAttackStatus(attackID) {
+  const res = http.get(`${ZEUS_URL}/api/v1/attacks/${attackID}`);
+  if (res.status !== 200) {
+    throw new Error(`getAttackStatus(${attackID}): HTTP ${res.status}`);
+  }
   return JSON.parse(res.body);
 }

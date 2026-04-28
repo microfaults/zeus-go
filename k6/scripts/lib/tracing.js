@@ -11,6 +11,10 @@
  * atropos SDKs read for rule scoping (resolves ambiguity A9).
  */
 
+const BAGGAGE_HEADER = "baggage";
+const BAGGAGE_TRACE_KEY = "meta-trace-id";
+const BAGGAGE_WORKFLOW_KEY = "atropos.workflow";
+
 /**
  * Generate a random hex meta-trace-id (32 hex chars = 16 bytes).
  */
@@ -36,28 +40,16 @@ export function withTracing(params, metaTraceID, workflowLabel) {
   params = params || {};
   params.headers = params.headers || {};
 
-  const entries = ["meta-trace-id=" + metaTraceID];
+  const entries = [`${BAGGAGE_TRACE_KEY}=${metaTraceID}`];
   if (workflowLabel) {
-    entries.push("atropos.workflow=" + workflowLabel);
+    entries.push(`${BAGGAGE_WORKFLOW_KEY}=${workflowLabel}`);
   }
 
   const newBaggage = entries.join(",");
-  const existing = params.headers["baggage"] || "";
-  params.headers["baggage"] = existing
-    ? existing + "," + newBaggage
+  const existing = params.headers[BAGGAGE_HEADER] || "";
+  params.headers[BAGGAGE_HEADER] = existing
+    ? `${existing},${newBaggage}`
     : newBaggage;
 
   return params;
-}
-
-/**
- * Create a tagged params object that includes both tracing and k6 tags.
- *
- * @param {string} metaTraceID - The meta-trace-id
- * @param {Object} tags - Additional k6 tags
- * @param {string} [workflowLabel] - Workflow label for atropos
- * @returns {Object} k6 params with baggage header and tags
- */
-export function withTracingAndTags(metaTraceID, tags, workflowLabel) {
-  return withTracing({ tags: tags || {} }, metaTraceID, workflowLabel);
 }

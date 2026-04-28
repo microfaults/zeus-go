@@ -11,29 +11,40 @@ import (
 
 	"atropos-go/loadgen/internal/api"
 	"atropos-go/loadgen/internal/attacker"
+	"atropos-go/loadgen/internal/dataset"
 	"atropos-go/loadgen/internal/dedup"
-	"atropos-go/loadgen/internal/policy"
-	"atropos-go/loadgen/internal/workload"
+	"atropos-go/loadgen/internal/run"
+	"atropos-go/loadgen/internal/sse"
+	"atropos-go/loadgen/internal/stats"
+	"atropos-go/loadgen/internal/workflow"
 )
 
 func main() {
 	addr := envOr("ZEUS_ADDR", ":8080")
-	evalInterval := 10 * time.Second
 
 	// Wire dependencies.
-	registry := workload.NewRegistry()
+	workflows := workflow.NewStore()
+	runs := run.NewStore()
+	datasets := dataset.NewStore()
 	manager := attacker.NewManager()
+	metrics := stats.NewMetrics()
+	snapshots := stats.NewSnapshotStore()
+	broker := sse.NewBroker()
 
 	// Register default dedup bypass strategies.
 	manager.RegisterBypass("header", &dedup.HeaderMutator{HeaderName: "X-Idempotency-Key"})
 	manager.RegisterBypass("query", &dedup.QueryParamMutator{ParamName: "nonce"})
 
-	// Policy engine with workload-derived metrics.
-	metricSource := &RegistryMetricSource{Registry: registry}
-	engine := policy.NewEngine(metricSource, manager, evalInterval)
-
 	// HTTP API server.
-	server := api.NewServer(registry, manager, engine)
+	server := api.NewServer(api.Deps{
+		Workflows: workflows,
+		Runs:      runs,
+		Datasets:  datasets,
+		Attacks:   manager,
+		Metrics:   metrics,
+		Snapshots: snapshots,
+		Broker:    broker,
+	})
 
 	httpServer := &http.Server{
 		Addr:    addr,
@@ -43,9 +54,6 @@ func main() {
 	// Graceful shutdown on SIGINT / SIGTERM.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-
-	// Start policy engine in background.
-	go engine.Run(ctx)
 
 	// Start HTTP server.
 	go func() {
@@ -74,21 +82,4 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
-}
-
-// RegistryMetricSource derives metrics from the workload registry.
-// Lives in main for now; can move to its own package if it grows.
-type RegistryMetricSource struct {
-	Registry *workload.Registry
-}
-
-func (s *RegistryMetricSource) GetMetric(name string) (float64, bool) {
-	switch name {
-	case "active_workloads":
-		return float64(len(s.Registry.List())), true
-	case "target_count":
-		return float64(len(s.Registry.TargetsInUse())), true
-	default:
-		return 0, false
-	}
 }
