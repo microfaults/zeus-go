@@ -17,6 +17,21 @@ type createDatasetRequest struct {
 	TTLS   int    `json:"ttl_s"`
 }
 
+// handleCreateDataset registers a new dataset shell.
+//
+// @Summary      Register dataset
+// @Description  Persist a dataset shell. Source is one of "upload" (NDJSON push), "inline"
+// @Description  (synthesized by run-create from dataset_inline), or "cache_box_dump" (future).
+// @Description  Defaults: source="upload", ttl_s=86400 (24 h). Rows are pushed separately via
+// @Description  POST /datasets/{id}/upload.
+// @Tags         datasets
+// @Accept       json
+// @Produce      json
+// @Param        body  body      api.createDatasetRequest  true  "dataset shell"
+// @Success      201   {object}  map[string]any            "envelope: id, name, source, created_at, ttl_s"
+// @Failure      400   {object}  api.ErrorResponse         "invalid JSON"
+// @Failure      409   {object}  api.ErrorResponse         "dataset name conflict"
+// @Router       /datasets [post]
 func (s *Server) handleCreateDataset(w http.ResponseWriter, r *http.Request) {
 	var req createDatasetRequest
 	if err := readJSON(r, &req); err != nil {
@@ -55,6 +70,22 @@ func (s *Server) handleCreateDataset(w http.ResponseWriter, r *http.Request) {
 
 // --- POST /api/v1/datasets/{id}/upload ---
 
+// handleUploadDataset streams NDJSON pool batches into an existing dataset.
+//
+// @Summary      Upload dataset rows (NDJSON)
+// @Description  Streams NDJSON pool batches into the dataset. Each line is
+// @Description  {"pool":"<name>","rows":[{...},...]}. The endpoint is lenient: per-line decode
+// @Description  errors are collected and returned in the response body but do not abort the
+// @Description  ingest. The response envelope contains ingested (per-pool counts), total
+// @Description  (rows accepted), and an optional errors array.
+// @Tags         datasets
+// @Accept       application/x-ndjson
+// @Produce      json
+// @Param        id    path      string  true  "Dataset ID"
+// @Success      200   {object}  map[string]any     "ingest result envelope"
+// @Failure      400   {object}  api.ErrorResponse  "ingest error (e.g. dataset not found at ingest time)"
+// @Failure      404   {object}  api.ErrorResponse  "dataset not found"
+// @Router       /datasets/{id}/upload [post]
 func (s *Server) handleUploadDataset(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if _, ok := s.deps.Datasets.Get(id); !ok {
@@ -80,6 +111,16 @@ func (s *Server) handleUploadDataset(w http.ResponseWriter, r *http.Request) {
 
 // --- GET /api/v1/datasets ---
 
+// handleListDatasets returns a wrapper containing dataset summaries.
+//
+// @Summary      List datasets
+// @Description  Returns an envelope { "datasets": [...] } with summary fields per dataset
+// @Description  (id, name, source, size_bytes, ttl_s, created_at). Use GET /datasets/{id}
+// @Description  for full pool stats.
+// @Tags         datasets
+// @Produce      json
+// @Success      200  {object}  map[string]any  "envelope with datasets array"
+// @Router       /datasets [get]
 func (s *Server) handleListDatasets(w http.ResponseWriter, r *http.Request) {
 	list := s.deps.Datasets.List()
 	type item struct {
@@ -106,6 +147,18 @@ func (s *Server) handleListDatasets(w http.ResponseWriter, r *http.Request) {
 
 // --- GET /api/v1/datasets/{id} ---
 
+// handleGetDataset returns a dataset's metadata and pool stats.
+//
+// @Summary      Get dataset
+// @Description  Returns an envelope with id, name, source, pool_stats (per-pool row_count,
+// @Description  size_bytes, fields), size_bytes, ttl_s, created_at. Use GET /datasets/{id}/sample
+// @Description  to inspect rows.
+// @Tags         datasets
+// @Produce      json
+// @Param        id   path      string  true  "Dataset ID"
+// @Success      200  {object}  map[string]any  "dataset metadata envelope"
+// @Failure      404  {object}  api.ErrorResponse  "dataset not found"
+// @Router       /datasets/{id} [get]
 func (s *Server) handleGetDataset(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	ds, ok := s.deps.Datasets.Get(id)
@@ -137,6 +190,20 @@ func (s *Server) handleGetDataset(w http.ResponseWriter, r *http.Request) {
 
 // --- GET /api/v1/datasets/{id}/sample ---
 
+// handleSampleDataset returns up to N rows from a dataset's named pool.
+//
+// @Summary      Sample dataset rows
+// @Description  Returns up to limit rows (default 10, capped at 100) from the named pool.
+// @Description  The response envelope is { "pool": "<name>", "rows": [...] }.
+// @Tags         datasets
+// @Produce      json
+// @Param        id     path      string  true   "Dataset ID"
+// @Param        pool   query     string  true   "Pool name to sample"
+// @Param        limit  query     int     false  "Max rows to return (default 10, max 100)"
+// @Success      200    {object}  map[string]any  "sample envelope"
+// @Failure      400    {object}  api.ErrorResponse  "missing pool query parameter"
+// @Failure      404    {object}  api.ErrorResponse  "dataset or pool not found"
+// @Router       /datasets/{id}/sample [get]
 func (s *Server) handleSampleDataset(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	pool := r.URL.Query().Get("pool")
@@ -169,6 +236,17 @@ func (s *Server) handleSampleDataset(w http.ResponseWriter, r *http.Request) {
 
 // --- DELETE /api/v1/datasets/{id} ---
 
+// handleDeleteDataset deletes a dataset if no active run references it.
+//
+// @Summary      Delete dataset
+// @Description  Refuses with 409 when an active run still references the dataset.
+// @Tags         datasets
+// @Produce      json
+// @Param        id   path      string  true  "Dataset ID"
+// @Success      204  "dataset deleted"
+// @Failure      404  {object}  api.ErrorResponse  "dataset not found"
+// @Failure      409  {object}  api.ErrorResponse  "dataset is in use by an active run"
+// @Router       /datasets/{id} [delete]
 func (s *Server) handleDeleteDataset(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 

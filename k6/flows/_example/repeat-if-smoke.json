@@ -5,6 +5,7 @@
   "description": "DSL v2 smoke test exercising repeat (count + while-max) and if (then + else).",
   "targets": ["httpbin"],
   "base_url": "https://httpbin.org",
+  "estimated_rps_per_vu": 1,
   "default_delay": { "min_ms": 50, "max_ms": 150 },
   "thresholds": {
     "http_req_failed": ["rate<0.1"]

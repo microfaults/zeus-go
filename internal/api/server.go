@@ -88,16 +88,26 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /api/v1/metrics", promhttp.HandlerFor(s.deps.Metrics.Registry(), promhttp.HandlerOpts{}))
 	s.mux.HandleFunc("GET /api/v1/metrics/summary", s.handleMetricsSummary)
 
-	// Health
+	// Health. Dual-mounted: root for direct-probe consumers (k8s liveness/readiness),
+	// /api/v1/... for spec-driven clients that compose from the server URL — the
+	// OpenAPI spec's `servers[0].url` ends in `/api/v1`, so a bare `/healthz` path
+	// key composes to `/api/v1/healthz`, which would 404 without the dual mount.
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	s.mux.HandleFunc("GET /readyz", s.handleReadyz)
+	s.mux.HandleFunc("GET /api/v1/healthz", s.handleHealthz)
+	s.mux.HandleFunc("GET /api/v1/readyz", s.handleReadyz)
 	s.mux.HandleFunc("GET /api/v1/status", s.handleStatus)
 }
 
 // --- JSON helpers ---
 
-type errorResponse struct {
-	Error string `json:"error"`
+// ErrorResponse is the JSON envelope returned for all error responses.
+// swag annotations reference api.ErrorResponse for 4xx/5xx documentation.
+//
+// Standard shape (subject to future migration to RFC 9457 problem+json
+// per manteion-ui/docs/API-NEEDED.md §C.5).
+type ErrorResponse struct {
+	Error string `json:"error" example:"validation failed"`
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -107,7 +117,7 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 }
 
 func writeError(w http.ResponseWriter, status int, msg string) {
-	writeJSON(w, status, errorResponse{Error: msg})
+	writeJSON(w, status, ErrorResponse{Error: msg})
 }
 
 func readJSON(r *http.Request, v any) error {

@@ -1,3 +1,14 @@
+// @title       Zeus Load Generation API
+// @version     1.0
+// @description Zeus is the execution plane for faults-lab. Manteion issues
+// @description commands to it. This document is the integration contract between
+// @description the two. Run lifecycle state machine and cross-cutting concerns
+// @description (dataset handshake, error envelope) are documented in
+// @description docs/api-contract.md.
+// @servers.url            http://localhost:8080/api/v1
+// @servers.description    Local dev (HTTP)
+// @servers.url            https://localhost:8080/api/v1
+// @servers.description    Local dev (HTTPS)
 package main
 
 import (

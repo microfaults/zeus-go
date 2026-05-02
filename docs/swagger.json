@@ -1,0 +1,1790 @@
+{
+    "components": {
+        "schemas": {
+            "api.ErrorResponse": {
+                "properties": {
+                    "error": {
+                        "example": "validation failed",
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "api.createDatasetRequest": {
+                "properties": {
+                    "name": {
+                        "type": "string"
+                    },
+                    "source": {
+                        "type": "string"
+                    },
+                    "ttl_s": {
+                        "type": "integer"
+                    }
+                },
+                "type": "object"
+            },
+            "api.createRunRequest": {
+                "properties": {
+                    "dataset_id": {
+                        "type": "string"
+                    },
+                    "dataset_inline": {
+                        "additionalProperties": {},
+                        "type": "object"
+                    },
+                    "duration_s": {
+                        "type": "integer"
+                    },
+                    "experiment_id": {
+                        "type": "string"
+                    },
+                    "labels": {
+                        "additionalProperties": {
+                            "type": "string"
+                        },
+                        "type": "object"
+                    },
+                    "meta_trace_id": {
+                        "type": "string"
+                    },
+                    "persona": {
+                        "type": "string"
+                    },
+                    "run_id": {
+                        "type": "string"
+                    },
+                    "vus": {
+                        "type": "integer"
+                    },
+                    "workflow_label": {
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "api.createRunResponse": {
+                "properties": {
+                    "k6_job_name": {
+                        "type": "string"
+                    },
+                    "meta_trace_id": {
+                        "type": "string"
+                    },
+                    "run_id": {
+                        "type": "string"
+                    },
+                    "started_at": {
+                        "type": "string"
+                    },
+                    "status": {
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "api.createWorkflowRequest": {
+                "properties": {
+                    "overwrite": {
+                        "type": "boolean"
+                    },
+                    "workflow": {
+                        "$ref": "#/components/schemas/workflow.Workflow"
+                    }
+                },
+                "type": "object"
+            },
+            "api.createWorkflowResponse": {
+                "properties": {
+                    "created_at": {
+                        "type": "string"
+                    },
+                    "id": {
+                        "type": "string"
+                    },
+                    "name": {
+                        "type": "string"
+                    },
+                    "version": {
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "api.validateRequest": {
+                "properties": {
+                    "dataset_id": {
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "attacker.Attack": {
+                "properties": {
+                    "config": {
+                        "$ref": "#/components/schemas/attacker.AttackConfig"
+                    },
+                    "result": {
+                        "$ref": "#/components/schemas/attacker.AttackResult"
+                    },
+                    "started_at": {
+                        "type": "string"
+                    },
+                    "status": {
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "attacker.AttackConfig": {
+                "properties": {
+                    "dedup_bypass": {
+                        "type": "string"
+                    },
+                    "duration": {
+                        "$ref": "#/components/schemas/time.Duration"
+                    },
+                    "experiment_id": {
+                        "type": "string"
+                    },
+                    "id": {
+                        "type": "string"
+                    },
+                    "meta_trace_id": {
+                        "type": "string"
+                    },
+                    "rate": {
+                        "type": "integer"
+                    },
+                    "run_ref": {
+                        "type": "string"
+                    },
+                    "target": {
+                        "$ref": "#/components/schemas/attacker.TargetSpec"
+                    },
+                    "workflow_label": {
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "attacker.AttackResult": {
+                "properties": {
+                    "bytes_in": {
+                        "$ref": "#/components/schemas/attacker.BytesSummary"
+                    },
+                    "bytes_out": {
+                        "$ref": "#/components/schemas/attacker.BytesSummary"
+                    },
+                    "duration": {
+                        "$ref": "#/components/schemas/time.Duration"
+                    },
+                    "errors": {
+                        "items": {
+                            "type": "string"
+                        },
+                        "type": "array",
+                        "uniqueItems": false
+                    },
+                    "latencies": {
+                        "$ref": "#/components/schemas/attacker.LatencySummary"
+                    },
+                    "rate_actual": {
+                        "type": "number"
+                    },
+                    "status_codes": {
+                        "additionalProperties": {
+                            "type": "integer"
+                        },
+                        "type": "object"
+                    },
+                    "success": {
+                        "type": "number"
+                    },
+                    "total_requests": {
+                        "type": "integer"
+                    }
+                },
+                "type": "object"
+            },
+            "attacker.BytesSummary": {
+                "properties": {
+                    "mean": {
+                        "type": "number"
+                    },
+                    "total": {
+                        "type": "integer"
+                    }
+                },
+                "type": "object"
+            },
+            "attacker.LatencySummary": {
+                "properties": {
+                    "max": {
+                        "$ref": "#/components/schemas/time.Duration"
+                    },
+                    "min": {
+                        "$ref": "#/components/schemas/time.Duration"
+                    },
+                    "p50": {
+                        "$ref": "#/components/schemas/time.Duration"
+                    },
+                    "p90": {
+                        "$ref": "#/components/schemas/time.Duration"
+                    },
+                    "p95": {
+                        "$ref": "#/components/schemas/time.Duration"
+                    },
+                    "p99": {
+                        "$ref": "#/components/schemas/time.Duration"
+                    }
+                },
+                "type": "object"
+            },
+            "attacker.TargetSpec": {
+                "properties": {
+                    "body": {
+                        "items": {
+                            "type": "integer"
+                        },
+                        "type": "array",
+                        "uniqueItems": false
+                    },
+                    "headers": {
+                        "additionalProperties": {
+                            "type": "string"
+                        },
+                        "type": "object"
+                    },
+                    "method": {
+                        "type": "string"
+                    },
+                    "url": {
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "dataset.ValidationResult": {
+                "properties": {
+                    "missing": {
+                        "items": {
+                            "type": "string"
+                        },
+                        "type": "array",
+                        "uniqueItems": false
+                    },
+                    "ok": {
+                        "type": "boolean"
+                    },
+                    "warnings": {
+                        "items": {
+                            "type": "string"
+                        },
+                        "type": "array",
+                        "uniqueItems": false
+                    }
+                },
+                "type": "object"
+            },
+            "run.Run": {
+                "properties": {
+                    "dataset_id": {
+                        "type": "string"
+                    },
+                    "ended_at": {
+                        "type": "string"
+                    },
+                    "experiment_id": {
+                        "type": "string"
+                    },
+                    "id": {
+                        "type": "string"
+                    },
+                    "k6_job_name": {
+                        "type": "string"
+                    },
+                    "labels": {
+                        "additionalProperties": {
+                            "type": "string"
+                        },
+                        "type": "object"
+                    },
+                    "meta_trace_id": {
+                        "type": "string"
+                    },
+                    "reason": {
+                        "type": "string"
+                    },
+                    "started_at": {
+                        "type": "string"
+                    },
+                    "status": {
+                        "type": "string"
+                    },
+                    "workflow_id": {
+                        "type": "string"
+                    },
+                    "workflow_label": {
+                        "type": "string"
+                    },
+                    "workflow_name": {
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "stats.RunStats": {
+                "properties": {
+                    "duration": {
+                        "$ref": "#/components/schemas/time.Duration"
+                    },
+                    "finalized_at": {
+                        "type": "string"
+                    },
+                    "iterations": {
+                        "type": "integer"
+                    },
+                    "latency_p50": {
+                        "$ref": "#/components/schemas/time.Duration"
+                    },
+                    "latency_p95": {
+                        "$ref": "#/components/schemas/time.Duration"
+                    },
+                    "latency_p99": {
+                        "$ref": "#/components/schemas/time.Duration"
+                    },
+                    "requests_dropped": {
+                        "type": "integer"
+                    },
+                    "requests_ok": {
+                        "type": "integer"
+                    },
+                    "requests_sent": {
+                        "type": "integer"
+                    },
+                    "run_id": {
+                        "type": "string"
+                    },
+                    "status": {
+                        "type": "string"
+                    },
+                    "variant_distribution": {
+                        "additionalProperties": {
+                            "type": "integer"
+                        },
+                        "type": "object"
+                    },
+                    "workflow_id": {
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "stats.Summary": {
+                "properties": {
+                    "active_attacks": {
+                        "type": "integer"
+                    },
+                    "active_runs": {
+                        "type": "integer"
+                    },
+                    "datasets": {
+                        "type": "integer"
+                    },
+                    "uptime_seconds": {
+                        "type": "number"
+                    }
+                },
+                "type": "object"
+            },
+            "time.Duration": {
+                "enum": [
+                    -9223372036854775808,
+                    9223372036854775807,
+                    1,
+                    1000,
+                    1000000,
+                    1000000000,
+                    60000000000,
+                    3600000000000
+                ],
+                "type": "integer",
+                "x-enum-varnames": [
+                    "minDuration",
+                    "maxDuration",
+                    "Nanosecond",
+                    "Microsecond",
+                    "Millisecond",
+                    "Second",
+                    "Minute",
+                    "Hour"
+                ]
+            },
+            "workflow.DataSchema": {
+                "properties": {
+                    "pools": {
+                        "additionalProperties": {
+                            "$ref": "#/components/schemas/workflow.PoolSchema"
+                        },
+                        "type": "object"
+                    }
+                },
+                "type": "object"
+            },
+            "workflow.DelaySpec": {
+                "properties": {
+                    "max_ms": {
+                        "type": "integer"
+                    },
+                    "min_ms": {
+                        "type": "integer"
+                    }
+                },
+                "type": "object"
+            },
+            "workflow.PoolSchema": {
+                "properties": {
+                    "fields": {
+                        "items": {
+                            "type": "string"
+                        },
+                        "type": "array",
+                        "uniqueItems": false
+                    },
+                    "min_size": {
+                        "type": "integer"
+                    },
+                    "optional": {
+                        "type": "boolean"
+                    }
+                },
+                "type": "object"
+            },
+            "workflow.Workflow": {
+                "properties": {
+                    "base_url": {
+                        "type": "string"
+                    },
+                    "created_at": {
+                        "type": "string"
+                    },
+                    "data_schema": {
+                        "$ref": "#/components/schemas/workflow.DataSchema"
+                    },
+                    "default_delay": {
+                        "$ref": "#/components/schemas/workflow.DelaySpec"
+                    },
+                    "description": {
+                        "type": "string"
+                    },
+                    "estimated_rps_per_vu": {
+                        "type": "integer"
+                    },
+                    "id": {
+                        "type": "string"
+                    },
+                    "name": {
+                        "type": "string"
+                    },
+                    "root": {
+                        "items": {
+                            "type": "integer"
+                        },
+                        "type": "array",
+                        "uniqueItems": false
+                    },
+                    "targets": {
+                        "items": {
+                            "type": "string"
+                        },
+                        "type": "array",
+                        "uniqueItems": false
+                    },
+                    "thresholds": {
+                        "additionalProperties": {
+                            "items": {
+                                "type": "string"
+                            },
+                            "type": "array"
+                        },
+                        "type": "object"
+                    },
+                    "version": {
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            }
+        }
+    },
+    "info": {
+        "description": "Zeus is the execution plane for faults-lab. Manteion issues\ncommands to it. This document is the integration contract between\nthe two. Run lifecycle state machine and cross-cutting concerns\n(dataset handshake, error envelope) are documented in\ndocs/api-contract.md.",
+        "title": "Zeus Load Generation API",
+        "version": "1.0"
+    },
+    "paths": {
+        "/attacks": {
+            "get": {
+                "description": "Returns a bare array of attacks. Optional query filters narrow by status,\nexperiment_id, and run_ref.",
+                "parameters": [
+                    {
+                        "description": "filter by attack status (e.g. running, completed)",
+                        "in": "query",
+                        "name": "status",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "filter by experiment id",
+                        "in": "query",
+                        "name": "experiment_id",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "filter by linked run id",
+                        "in": "query",
+                        "name": "run_ref",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "items": {
+                                        "$ref": "#/components/schemas/attacker.Attack"
+                                    },
+                                    "type": "array"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    }
+                },
+                "summary": "List attacks",
+                "tags": [
+                    "attacks"
+                ]
+            },
+            "post": {
+                "description": "Persist and launch a precision attack. The body is an attacker.AttackConfig.\nWhen run_ref references an existing run, meta_trace_id and workflow_label are\ninherited from the linked run if not set on the request. The response is an\ninline envelope with id, status, and started_at; the launched Attack object is\nretrievable via GET /attacks/{id}.",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "oneOf": [
+                                    {
+                                        "type": "object"
+                                    },
+                                    {
+                                        "$ref": "#/components/schemas/attacker.AttackConfig",
+                                        "summary": "attack",
+                                        "description": "attack configuration"
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                    "description": "attack configuration",
+                    "required": true
+                },
+                "responses": {
+                    "202": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {},
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "attack accepted; envelope contains id, status, started_at"
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/api.ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "invalid JSON or attack validation error"
+                    }
+                },
+                "summary": "Launch attack",
+                "tags": [
+                    "attacks"
+                ]
+            }
+        },
+        "/attacks/{id}": {
+            "delete": {
+                "description": "Cancels a running attack and decrements the active-attacks gauge.",
+                "parameters": [
+                    {
+                        "description": "Attack ID",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "attack stopped"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/api.ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "attack not found"
+                    }
+                },
+                "summary": "Stop attack",
+                "tags": [
+                    "attacks"
+                ]
+            },
+            "get": {
+                "parameters": [
+                    {
+                        "description": "Attack ID",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/attacker.Attack"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/api.ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "attack not found"
+                    }
+                },
+                "summary": "Get attack",
+                "tags": [
+                    "attacks"
+                ]
+            }
+        },
+        "/attacks/{id}/stats": {
+            "get": {
+                "description": "Returns an inline envelope with attack_id, status, config, optional result\n(vegeta-derived totals + latency percentiles), and optional dedup strategy\nmetadata when DedupBypass is configured on the attack.",
+                "parameters": [
+                    {
+                        "description": "Attack ID",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {},
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "attack stats envelope (attack_id, status, config, result?, dedup?)"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/api.ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "attack not found"
+                    }
+                },
+                "summary": "Get attack stats",
+                "tags": [
+                    "attacks"
+                ]
+            }
+        },
+        "/datasets": {
+            "get": {
+                "description": "Returns an envelope { \"datasets\": [...] } with summary fields per dataset\n(id, name, source, size_bytes, ttl_s, created_at). Use GET /datasets/{id}\nfor full pool stats.",
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {},
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "envelope with datasets array"
+                    }
+                },
+                "summary": "List datasets",
+                "tags": [
+                    "datasets"
+                ]
+            },
+            "post": {
+                "description": "Persist a dataset shell. Source is one of \"upload\" (NDJSON push), \"inline\"\n(synthesized by run-create from dataset_inline), or \"cache_box_dump\" (future).\nDefaults: source=\"upload\", ttl_s=86400 (24 h). Rows are pushed separately via\nPOST /datasets/{id}/upload.",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "oneOf": [
+                                    {
+                                        "type": "object"
+                                    },
+                                    {
+                                        "$ref": "#/components/schemas/api.createDatasetRequest",
+                                        "summary": "body",
+                                        "description": "dataset shell"
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                    "description": "dataset shell",
+                    "required": true
+                },
+                "responses": {
+                    "201": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {},
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "envelope: id, name, source, created_at, ttl_s"
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/api.ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "invalid JSON"
+                    },
+                    "409": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/api.ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "dataset name conflict"
+                    }
+                },
+                "summary": "Register dataset",
+                "tags": [
+                    "datasets"
+                ]
+            }
+        },
+        "/datasets/{id}": {
+            "delete": {
+                "description": "Refuses with 409 when an active run still references the dataset.",
+                "parameters": [
+                    {
+                        "description": "Dataset ID",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "dataset deleted"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/api.ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "dataset not found"
+                    },
+                    "409": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/api.ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "dataset is in use by an active run"
+                    }
+                },
+                "summary": "Delete dataset",
+                "tags": [
+                    "datasets"
+                ]
+            },
+            "get": {
+                "description": "Returns an envelope with id, name, source, pool_stats (per-pool row_count,\nsize_bytes, fields), size_bytes, ttl_s, created_at. Use GET /datasets/{id}/sample\nto inspect rows.",
+                "parameters": [
+                    {
+                        "description": "Dataset ID",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {},
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "dataset metadata envelope"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/api.ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "dataset not found"
+                    }
+                },
+                "summary": "Get dataset",
+                "tags": [
+                    "datasets"
+                ]
+            }
+        },
+        "/datasets/{id}/sample": {
+            "get": {
+                "description": "Returns up to limit rows (default 10, capped at 100) from the named pool.\nThe response envelope is { \"pool\": \"<name>\", \"rows\": [...] }.",
+                "parameters": [
+                    {
+                        "description": "Dataset ID",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "Pool name to sample",
+                        "in": "query",
+                        "name": "pool",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "Max rows to return (default 10, max 100)",
+                        "in": "query",
+                        "name": "limit",
+                        "schema": {
+                            "type": "integer"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {},
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "sample envelope"
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/api.ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "missing pool query parameter"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/api.ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "dataset or pool not found"
+                    }
+                },
+                "summary": "Sample dataset rows",
+                "tags": [
+                    "datasets"
+                ]
+            }
+        },
+        "/datasets/{id}/upload": {
+            "post": {
+                "description": "Streams NDJSON pool batches into the dataset. Each line is\n{\"pool\":\"<name>\",\"rows\":[{...},...]}. The endpoint is lenient: per-line decode\nerrors are collected and returned in the response body but do not abort the\ningest. The response envelope contains ingested (per-pool counts), total\n(rows accepted), and an optional errors array.",
+                "parameters": [
+                    {
+                        "description": "Dataset ID",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/x-ndjson": {
+                            "schema": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {},
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "ingest result envelope"
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/api.ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "ingest error (e.g. dataset not found at ingest time)"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/api.ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "dataset not found"
+                    }
+                },
+                "summary": "Upload dataset rows (NDJSON)",
+                "tags": [
+                    "datasets"
+                ]
+            }
+        },
+        "/healthz": {
+            "get": {
+                "description": "Returns 200 with {status: ok} once the process accepts requests. Dual-mounted\nat root (/healthz) and /api/v1/healthz; the @Router uses the bare path key\nso spec consumers composing servers[0].url + path resolve correctly.",
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {
+                                        "type": "string"
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "status envelope"
+                    }
+                },
+                "summary": "Liveness probe",
+                "tags": [
+                    "health"
+                ]
+            }
+        },
+        "/metrics/summary": {
+            "get": {
+                "description": "Returns a stats.Summary with active_runs, active_attacks, datasets, and\nuptime_seconds. Companion to GET /metrics (Prometheus scrape) for callers\nthat don't speak Prometheus.",
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/stats.Summary"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    }
+                },
+                "summary": "Zeus-wide stats summary",
+                "tags": [
+                    "metrics"
+                ]
+            }
+        },
+        "/readyz": {
+            "get": {
+                "description": "Returns 200 with {status: ready} when the metric registry and in-memory stores\nare initialized. Dual-mounted at root (/readyz) and /api/v1/readyz.",
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {
+                                        "type": "string"
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "status envelope"
+                    }
+                },
+                "summary": "Readiness probe",
+                "tags": [
+                    "health"
+                ]
+            }
+        },
+        "/runs": {
+            "get": {
+                "description": "Returns an envelope { \"runs\": [...] }. Filters are AND-combined; \"since\" must be\nRFC 3339 (invalid timestamps are silently ignored).",
+                "parameters": [
+                    {
+                        "description": "filter by run status",
+                        "in": "query",
+                        "name": "status",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "filter by experiment id",
+                        "in": "query",
+                        "name": "experiment_id",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "filter by workflow id",
+                        "in": "query",
+                        "name": "workflow_id",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "RFC 3339 lower bound on started_at",
+                        "in": "query",
+                        "name": "since",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {},
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "envelope with runs array"
+                    }
+                },
+                "summary": "List runs (cross-workflow)",
+                "tags": [
+                    "runs"
+                ]
+            }
+        },
+        "/runs/{run_id}": {
+            "delete": {
+                "description": "Transitions a non-terminal run to \"stopped\". Refuses with 409 when the run is\nalready in a terminal state (completed/stopped/failed/rejected). On success,\nPrometheus per-run label series are pruned and SSE subscribers are closed.",
+                "parameters": [
+                    {
+                        "description": "Run ID",
+                        "in": "path",
+                        "name": "run_id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "run stopped"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/api.ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "run not found"
+                    },
+                    "409": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/api.ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "run is already in terminal state"
+                    }
+                },
+                "summary": "Stop run",
+                "tags": [
+                    "runs"
+                ]
+            },
+            "get": {
+                "parameters": [
+                    {
+                        "description": "Run ID",
+                        "in": "path",
+                        "name": "run_id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/run.Run"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/api.ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "run not found"
+                    }
+                },
+                "summary": "Get run",
+                "tags": [
+                    "runs"
+                ]
+            }
+        },
+        "/runs/{run_id}/events": {
+            "get": {
+                "description": "Server-Sent Events stream of run lifecycle and per-step events. Event types\nemitted: step.ok, step.drop, iteration.done, phase.transition. Used by manteion\nfor live dashboards; not the canonical aggregated stats source. The Last-Event-ID\nheader is reserved for future resumable-stream support; the current handler does\nnot parse it (subscriber starts at the live edge).",
+                "parameters": [
+                    {
+                        "description": "Run ID",
+                        "in": "path",
+                        "name": "run_id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "Last event ID for resumable stream (reserved; not yet honored)",
+                        "in": "header",
+                        "name": "Last-Event-ID",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "text/event-stream": {
+                                "schema": {
+                                    "type": "string"
+                                }
+                            }
+                        },
+                        "description": "SSE stream of run events"
+                    },
+                    "404": {
+                        "content": {
+                            "text/event-stream": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/api.ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "run not found"
+                    },
+                    "500": {
+                        "content": {
+                            "text/event-stream": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/api.ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "streaming not supported by the underlying response writer"
+                    }
+                },
+                "summary": "Stream run events (SSE)",
+                "tags": [
+                    "runs"
+                ]
+            }
+        },
+        "/runs/{run_id}/stats": {
+            "get": {
+                "description": "Returns the finalized RunStats snapshot for a run. While the run is still in\nflight (or finished without a snapshot persisted), responds 200 with a minimal\nenvelope { \"run_id\": ..., \"status\": \"no stats available yet\" } instead of 404.\nThe handler is tagged \"metrics\" rather than \"runs\" because it serves aggregate\nnumbers, not run-document state.",
+                "parameters": [
+                    {
+                        "description": "Run ID",
+                        "in": "path",
+                        "name": "run_id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/stats.RunStats"
+                                }
+                            }
+                        },
+                        "description": "stats snapshot (or pending placeholder envelope)"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/api.ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "run not found"
+                    }
+                },
+                "summary": "Get run stats",
+                "tags": [
+                    "metrics"
+                ]
+            }
+        },
+        "/status": {
+            "get": {
+                "description": "Returns active_runs, active_attacks, datasets, and uptime_seconds plus a\nstatus string. Computed from live store counts on every call.",
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {},
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "status overview envelope"
+                    }
+                },
+                "summary": "Operator status overview",
+                "tags": [
+                    "health"
+                ]
+            }
+        },
+        "/workflows": {
+            "get": {
+                "description": "Returns an envelope { \"workflows\": [...] } where each entry is a compact\nsummary (id, name, version, targets) \u2014 not the full DSL document. Use GET\n/workflows/{id} for the full document.",
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {},
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "envelope with workflows array"
+                    }
+                },
+                "summary": "List workflows",
+                "tags": [
+                    "workflows"
+                ]
+            },
+            "post": {
+                "description": "Persist a Zeus DSL v2 workflow. The body envelope wraps the workflow object\nalongside an overwrite flag; when overwrite is true, an existing workflow with\nthe same name is replaced. Schema validation runs before persistence; failures\nreturn 400 with the validator error string. Name conflicts without overwrite\nyield 409.",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "oneOf": [
+                                    {
+                                        "type": "object"
+                                    },
+                                    {
+                                        "$ref": "#/components/schemas/api.createWorkflowRequest",
+                                        "summary": "body",
+                                        "description": "workflow envelope"
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                    "description": "workflow envelope",
+                    "required": true
+                },
+                "responses": {
+                    "201": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/api.createWorkflowResponse"
+                                }
+                            }
+                        },
+                        "description": "Created"
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/api.ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "invalid JSON or workflow validation error"
+                    },
+                    "409": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/api.ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "workflow name conflict (overwrite != true)"
+                    }
+                },
+                "summary": "Register workflow",
+                "tags": [
+                    "workflows"
+                ]
+            }
+        },
+        "/workflows/{id}": {
+            "delete": {
+                "description": "Refuses with 409 when any non-terminal run is still bound to the workflow;\ncallers should stop those runs first.",
+                "parameters": [
+                    {
+                        "description": "Workflow ID",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "workflow deleted"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/api.ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "workflow not found"
+                    },
+                    "409": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/api.ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "workflow has active runs"
+                    }
+                },
+                "summary": "Delete workflow",
+                "tags": [
+                    "workflows"
+                ]
+            },
+            "get": {
+                "parameters": [
+                    {
+                        "description": "Workflow ID",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/workflow.Workflow"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/api.ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "workflow not found"
+                    }
+                },
+                "summary": "Get workflow",
+                "tags": [
+                    "workflows"
+                ]
+            }
+        },
+        "/workflows/{id}/runs": {
+            "get": {
+                "description": "Returns an envelope { \"runs\": [...] } of all runs (including terminal) bound\nto the workflow.",
+                "parameters": [
+                    {
+                        "description": "Workflow ID",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {},
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "envelope with runs array"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/api.ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "workflow not found"
+                    }
+                },
+                "summary": "List runs for a workflow",
+                "tags": [
+                    "runs"
+                ]
+            },
+            "post": {
+                "description": "Starts a run for the given workflow. Either dataset_id or dataset_inline (capped\nat 1 MiB) may be supplied \u2014 they are mutually exclusive. When the workflow\ndeclares a DataSchema, the dataset is validated; failures produce a terminal\n\"rejected\" run and a 422 response with {run_id, status, reason}. Other run-level\nrejections (workflow not found, run_id conflict, oversized inline) return their\nnatural codes; the run is not persisted in those cases. The success body is a\n202-Accepted envelope of run_id, status, meta_trace_id, k6_job_name, started_at.",
+                "parameters": [
+                    {
+                        "description": "Workflow ID",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "oneOf": [
+                                    {
+                                        "type": "object"
+                                    },
+                                    {
+                                        "$ref": "#/components/schemas/api.createRunRequest",
+                                        "summary": "body",
+                                        "description": "run request"
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                    "description": "run request",
+                    "required": true
+                },
+                "responses": {
+                    "202": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/api.createRunResponse"
+                                }
+                            }
+                        },
+                        "description": "Accepted"
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/api.ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "invalid JSON, mutually exclusive dataset fields, or pool shape error"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/api.ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "workflow or referenced dataset not found"
+                    },
+                    "409": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/api.ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "run_id conflict"
+                    },
+                    "413": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/api.ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "dataset_inline exceeds 1 MiB"
+                    },
+                    "422": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {},
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "dataset failed schema validation; run created in rejected state"
+                    },
+                    "500": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/api.ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "inline dataset persistence failure"
+                    }
+                },
+                "summary": "Start workflow run",
+                "tags": [
+                    "runs"
+                ]
+            }
+        },
+        "/workflows/{id}/validate": {
+            "post": {
+                "description": "Runs ValidateDataset against the workflow's DataSchema. Workflows without a\nDataSchema short-circuit to {ok: true, warnings: []}. The result body is a\ndataset.ValidationResult. Returns 422 (not 400) when the dataset fails schema\nvalidation, mirroring run-create's rejected semantics. 400 is reserved for\nmalformed request bodies.",
+                "parameters": [
+                    {
+                        "description": "Workflow ID",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "oneOf": [
+                                    {
+                                        "type": "object"
+                                    },
+                                    {
+                                        "$ref": "#/components/schemas/api.validateRequest",
+                                        "summary": "body",
+                                        "description": "validation request (dataset id)"
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                    "description": "validation request (dataset id)",
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/dataset.ValidationResult"
+                                }
+                            }
+                        },
+                        "description": "validation succeeded"
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/api.ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "invalid JSON"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/api.ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "workflow or dataset not found"
+                    },
+                    "422": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/dataset.ValidationResult"
+                                }
+                            }
+                        },
+                        "description": "dataset failed schema validation"
+                    }
+                },
+                "summary": "Validate workflow against dataset",
+                "tags": [
+                    "workflows"
+                ]
+            }
+        }
+    },
+    "openapi": "3.1.0",
+    "servers": [
+        {
+            "description": "Local dev (HTTP)",
+            "url": "http://localhost:8080/api/v1"
+        },
+        {
+            "description": "Local dev (HTTPS)",
+            "url": "https://localhost:8080/api/v1"
+        }
+    ]
+}

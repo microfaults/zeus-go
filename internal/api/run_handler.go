@@ -35,6 +35,31 @@ type createRunResponse struct {
 	StartedAt   time.Time `json:"started_at"`
 }
 
+// handleCreateRun starts a workflow run. Dataset binding is handshake-aware:
+// rejection on schema validation produces a terminal "rejected" run with 422,
+// not 400. See the run lifecycle state machine in docs/api-contract.md.
+//
+// @Summary      Start workflow run
+// @Description  Starts a run for the given workflow. Either dataset_id or dataset_inline (capped
+// @Description  at 1 MiB) may be supplied — they are mutually exclusive. When the workflow
+// @Description  declares a DataSchema, the dataset is validated; failures produce a terminal
+// @Description  "rejected" run and a 422 response with {run_id, status, reason}. Other run-level
+// @Description  rejections (workflow not found, run_id conflict, oversized inline) return their
+// @Description  natural codes; the run is not persisted in those cases. The success body is a
+// @Description  202-Accepted envelope of run_id, status, meta_trace_id, k6_job_name, started_at.
+// @Tags         runs
+// @Accept       json
+// @Produce      json
+// @Param        id    path      string                  true  "Workflow ID"
+// @Param        body  body      api.createRunRequest    true  "run request"
+// @Success      202   {object}  api.createRunResponse
+// @Failure      400   {object}  api.ErrorResponse  "invalid JSON, mutually exclusive dataset fields, or pool shape error"
+// @Failure      404   {object}  api.ErrorResponse  "workflow or referenced dataset not found"
+// @Failure      409   {object}  api.ErrorResponse  "run_id conflict"
+// @Failure      413   {object}  api.ErrorResponse  "dataset_inline exceeds 1 MiB"
+// @Failure      422   {object}  map[string]any     "dataset failed schema validation; run created in rejected state"
+// @Failure      500   {object}  api.ErrorResponse  "inline dataset persistence failure"
+// @Router       /workflows/{id}/runs [post]
 func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 	workflowID := r.PathValue("id")
 	wf, ok := s.deps.Workflows.Get(workflowID)
@@ -168,6 +193,17 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 
 // --- GET /api/v1/workflows/{id}/runs ---
 
+// handleListWorkflowRuns returns runs scoped to a single workflow.
+//
+// @Summary      List runs for a workflow
+// @Description  Returns an envelope { "runs": [...] } of all runs (including terminal) bound
+// @Description  to the workflow.
+// @Tags         runs
+// @Produce      json
+// @Param        id   path      string  true  "Workflow ID"
+// @Success      200  {object}  map[string]any  "envelope with runs array"
+// @Failure      404  {object}  api.ErrorResponse  "workflow not found"
+// @Router       /workflows/{id}/runs [get]
 func (s *Server) handleListWorkflowRuns(w http.ResponseWriter, r *http.Request) {
 	workflowID := r.PathValue("id")
 	if _, ok := s.deps.Workflows.Get(workflowID); !ok {
@@ -180,6 +216,19 @@ func (s *Server) handleListWorkflowRuns(w http.ResponseWriter, r *http.Request) 
 
 // --- GET /api/v1/runs ---
 
+// handleListRuns returns cross-workflow runs filtered by query parameters.
+//
+// @Summary      List runs (cross-workflow)
+// @Description  Returns an envelope { "runs": [...] }. Filters are AND-combined; "since" must be
+// @Description  RFC 3339 (invalid timestamps are silently ignored).
+// @Tags         runs
+// @Produce      json
+// @Param        status         query     string  false  "filter by run status"
+// @Param        experiment_id  query     string  false  "filter by experiment id"
+// @Param        workflow_id    query     string  false  "filter by workflow id"
+// @Param        since          query     string  false  "RFC 3339 lower bound on started_at"
+// @Success      200  {object}  map[string]any  "envelope with runs array"
+// @Router       /runs [get]
 func (s *Server) handleListRuns(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	filters := run.ListFilters{
@@ -199,6 +248,15 @@ func (s *Server) handleListRuns(w http.ResponseWriter, r *http.Request) {
 
 // --- GET /api/v1/runs/{run_id} ---
 
+// handleGetRun returns a single run document.
+//
+// @Summary      Get run
+// @Tags         runs
+// @Produce      json
+// @Param        run_id  path      string  true  "Run ID"
+// @Success      200     {object}  run.Run
+// @Failure      404     {object}  api.ErrorResponse  "run not found"
+// @Router       /runs/{run_id} [get]
 func (s *Server) handleGetRun(w http.ResponseWriter, r *http.Request) {
 	runID := r.PathValue("run_id")
 	rn, ok := s.deps.Runs.Get(runID)
@@ -211,6 +269,20 @@ func (s *Server) handleGetRun(w http.ResponseWriter, r *http.Request) {
 
 // --- DELETE /api/v1/runs/{run_id} ---
 
+// handleStopRun stops a non-terminal run, prunes Prometheus run-id labels, and closes
+// SSE subscribers.
+//
+// @Summary      Stop run
+// @Description  Transitions a non-terminal run to "stopped". Refuses with 409 when the run is
+// @Description  already in a terminal state (completed/stopped/failed/rejected). On success,
+// @Description  Prometheus per-run label series are pruned and SSE subscribers are closed.
+// @Tags         runs
+// @Produce      json
+// @Param        run_id  path      string  true  "Run ID"
+// @Success      204     "run stopped"
+// @Failure      404     {object}  api.ErrorResponse  "run not found"
+// @Failure      409     {object}  api.ErrorResponse  "run is already in terminal state"
+// @Router       /runs/{run_id} [delete]
 func (s *Server) handleStopRun(w http.ResponseWriter, r *http.Request) {
 	runID := r.PathValue("run_id")
 	rn, ok := s.deps.Runs.Get(runID)
@@ -240,6 +312,22 @@ func (s *Server) handleStopRun(w http.ResponseWriter, r *http.Request) {
 
 // --- GET /api/v1/runs/{run_id}/events ---
 
+// handleRunEvents streams run events as Server-Sent Events.
+//
+// @Summary      Stream run events (SSE)
+// @Description  Server-Sent Events stream of run lifecycle and per-step events. Event types
+// @Description  emitted: step.ok, step.drop, iteration.done, phase.transition. Used by manteion
+// @Description  for live dashboards; not the canonical aggregated stats source. The Last-Event-ID
+// @Description  header is reserved for future resumable-stream support; the current handler does
+// @Description  not parse it (subscriber starts at the live edge).
+// @Tags         runs
+// @Produce      text/event-stream
+// @Param        run_id        path    string  true   "Run ID"
+// @Param        Last-Event-ID header  string  false  "Last event ID for resumable stream (reserved; not yet honored)"
+// @Success      200  "SSE stream of run events"
+// @Failure      404  {object}  api.ErrorResponse  "run not found"
+// @Failure      500  {object}  api.ErrorResponse  "streaming not supported by the underlying response writer"
+// @Router       /runs/{run_id}/events [get]
 func (s *Server) handleRunEvents(w http.ResponseWriter, r *http.Request) {
 	runID := r.PathValue("run_id")
 	if _, ok := s.deps.Runs.Get(runID); !ok {
@@ -285,6 +373,21 @@ func writeSSEEvent(w http.ResponseWriter, event sse.Event) {
 
 // --- GET /api/v1/runs/{run_id}/stats ---
 
+// handleRunStats returns the finalized stats snapshot for a run, or a placeholder envelope
+// when stats have not been written yet.
+//
+// @Summary      Get run stats
+// @Description  Returns the finalized RunStats snapshot for a run. While the run is still in
+// @Description  flight (or finished without a snapshot persisted), responds 200 with a minimal
+// @Description  envelope { "run_id": ..., "status": "no stats available yet" } instead of 404.
+// @Description  The handler is tagged "metrics" rather than "runs" because it serves aggregate
+// @Description  numbers, not run-document state.
+// @Tags         metrics
+// @Produce      json
+// @Param        run_id  path      string  true  "Run ID"
+// @Success      200     {object}  stats.RunStats  "stats snapshot (or pending placeholder envelope)"
+// @Failure      404     {object}  api.ErrorResponse  "run not found"
+// @Router       /runs/{run_id}/stats [get]
 func (s *Server) handleRunStats(w http.ResponseWriter, r *http.Request) {
 	runID := r.PathValue("run_id")
 	if _, ok := s.deps.Runs.Get(runID); !ok {

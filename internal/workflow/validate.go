@@ -24,6 +24,9 @@ func ValidateWorkflow(w *Workflow) error {
 	if len(w.Targets) == 0 {
 		return fmt.Errorf("workflow: at least one target is required")
 	}
+	if w.EstimatedRPSPerVU <= 0 {
+		return fmt.Errorf("workflow: estimated_rps_per_vu must be > 0 (drives constant-arrival-rate executor)")
+	}
 	return nil
 }
 

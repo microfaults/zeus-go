@@ -525,12 +525,31 @@ export function createEngine(flowPath, personaPath, dataPath) {
   const metaTraceID = generateMetaTraceID();
   const workflowLabel = __ENV.ZEUS_WORKFLOW_LABEL || flow.name;
 
+  const vus = __ENV.VUS ? parseInt(__ENV.VUS) : 10;
+  const duration = __ENV.DURATION || "5m";
+  const rpsPerVU = flow.estimated_rps_per_vu || 1;
+  const targetRPS = vus * rpsPerVU;
+
+  // Open-loop generator: hold offered RPS constant across phases so a cached
+  // service does not implicitly inflate load on un-frozen services. See the
+  // "closed-loop generator" entry under VISION.md "Known confounds".
   const options = {
-    vus: __ENV.VUS ? parseInt(__ENV.VUS) : 10,
-    duration: __ENV.DURATION || "5m",
-    thresholds: flow.thresholds || {
-      http_req_failed: ["rate<0.1"],
-      http_req_duration: ["p(95)<2000"],
+    scenarios: {
+      workflow: {
+        executor: "constant-arrival-rate",
+        rate: targetRPS,
+        timeUnit: "1s",
+        duration: duration,
+        preAllocatedVUs: vus,
+        maxVUs: vus * 4,
+      },
+    },
+    thresholds: {
+      ...(flow.thresholds || {
+        http_req_failed: ["rate<0.1"],
+        http_req_duration: ["p(95)<2000"],
+      }),
+      dropped_iterations: ["count==0"],
     },
   };
 
