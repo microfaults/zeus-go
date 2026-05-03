@@ -13,7 +13,7 @@ import (
 
 type createWorkflowRequest struct {
 	Workflow  *workflow.Workflow `json:"workflow"`
-	Overwrite bool              `json:"overwrite"`
+	Overwrite bool               `json:"overwrite"`
 }
 
 type createWorkflowResponse struct {
@@ -222,4 +222,3 @@ func (s *Server) handleValidateWorkflow(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusUnprocessableEntity, result)
 	}
 }
-

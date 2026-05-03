@@ -87,4 +87,3 @@ func (s *Store) Delete(id string) error {
 	delete(s.workflows, id)
 	return nil
 }
-

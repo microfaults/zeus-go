@@ -28,9 +28,9 @@ type DataSchema struct {
 
 // PoolSchema describes a single data pool.
 type PoolSchema struct {
-	Fields  []string `json:"fields"`
-	MinSize int      `json:"min_size"`
-	Optional bool    `json:"optional"`
+	Fields   []string `json:"fields"`
+	MinSize  int      `json:"min_size"`
+	Optional bool     `json:"optional"`
 }
 
 // DelaySpec represents a random delay range in milliseconds.

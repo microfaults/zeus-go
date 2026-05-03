@@ -9,29 +9,29 @@ type Metrics struct {
 	registry *prometheus.Registry
 
 	// Counters
-	RunsStartedTotal        *prometheus.CounterVec
-	RunsCompletedTotal      *prometheus.CounterVec
-	RequestsSentTotal       *prometheus.CounterVec
-	RequestsOKTotal         *prometheus.CounterVec
-	RequestsDroppedTotal    *prometheus.CounterVec
-	VariantPicksTotal       *prometheus.CounterVec
-	IterationsTotal         *prometheus.CounterVec
-	AttacksStartedTotal     *prometheus.CounterVec
-	AttacksHitsTotal        *prometheus.CounterVec
-	AttacksMissesTotal      *prometheus.CounterVec
-	DatasetsBytesIngested   *prometheus.CounterVec
+	RunsStartedTotal      *prometheus.CounterVec
+	RunsCompletedTotal    *prometheus.CounterVec
+	RequestsSentTotal     *prometheus.CounterVec
+	RequestsOKTotal       *prometheus.CounterVec
+	RequestsDroppedTotal  *prometheus.CounterVec
+	VariantPicksTotal     *prometheus.CounterVec
+	IterationsTotal       *prometheus.CounterVec
+	AttacksStartedTotal   *prometheus.CounterVec
+	AttacksHitsTotal      *prometheus.CounterVec
+	AttacksMissesTotal    *prometheus.CounterVec
+	DatasetsBytesIngested *prometheus.CounterVec
 
 	// Histograms
-	RequestDuration        *prometheus.HistogramVec
-	StepDuration           *prometheus.HistogramVec
-	IterationDuration      *prometheus.HistogramVec
-	AttackRequestDuration  *prometheus.HistogramVec
+	RequestDuration       *prometheus.HistogramVec
+	StepDuration          *prometheus.HistogramVec
+	IterationDuration     *prometheus.HistogramVec
+	AttackRequestDuration *prometheus.HistogramVec
 
 	// Gauges
-	ActiveRuns      *prometheus.GaugeVec
-	ActiveVUs       *prometheus.GaugeVec
-	ActiveAttacks   *prometheus.GaugeVec
-	DatasetsTotal   *prometheus.GaugeVec
+	ActiveRuns       *prometheus.GaugeVec
+	ActiveVUs        *prometheus.GaugeVec
+	ActiveAttacks    *prometheus.GaugeVec
+	DatasetsTotal    *prometheus.GaugeVec
 	DatasetSizeBytes *prometheus.GaugeVec
 }
 

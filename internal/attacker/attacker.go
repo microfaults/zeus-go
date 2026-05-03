@@ -57,7 +57,7 @@ func (c *AttackConfig) Validate() error {
 type Attack struct {
 	Config    AttackConfig  `json:"config"`
 	Status    string        `json:"status"`
-	StartedAt time.Time    `json:"started_at"`
+	StartedAt time.Time     `json:"started_at"`
 	Result    *AttackResult `json:"result,omitempty"`
 	cancel    context.CancelFunc
 }

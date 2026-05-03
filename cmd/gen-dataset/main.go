@@ -127,7 +127,7 @@ func generateUser(i int) map[string]any {
 		"credit_card_number":           luhnCard(i),
 		"credit_card_expiration_month": rand.IntN(12) + 1,
 		"credit_card_expiration_year":  2027 + rand.IntN(4),
-		"credit_card_cvv":             100 + rand.IntN(900),
+		"credit_card_cvv":              100 + rand.IntN(900),
 	}
 }
 

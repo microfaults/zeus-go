@@ -137,4 +137,3 @@ func (s *Store) CountByStatus(status string) int {
 	}
 	return count
 }
-

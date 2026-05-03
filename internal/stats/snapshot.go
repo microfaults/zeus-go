@@ -9,19 +9,19 @@ import (
 
 // RunStats holds finalized stats for a completed workflow run.
 type RunStats struct {
-	RunID               string            `json:"run_id"`
-	WorkflowID          string            `json:"workflow_id"`
-	Status              string            `json:"status"`
-	Duration            time.Duration     `json:"duration"`
-	Iterations          int64             `json:"iterations"`
-	RequestsSent        int64             `json:"requests_sent"`
-	RequestsOK          int64             `json:"requests_ok"`
-	RequestsDropped     int64             `json:"requests_dropped"`
-	LatencyP50          time.Duration     `json:"latency_p50"`
-	LatencyP95          time.Duration     `json:"latency_p95"`
-	LatencyP99          time.Duration     `json:"latency_p99"`
-	VariantDistribution map[string]int64  `json:"variant_distribution"`
-	FinalizedAt         time.Time         `json:"finalized_at"`
+	RunID               string           `json:"run_id"`
+	WorkflowID          string           `json:"workflow_id"`
+	Status              string           `json:"status"`
+	Duration            time.Duration    `json:"duration"`
+	Iterations          int64            `json:"iterations"`
+	RequestsSent        int64            `json:"requests_sent"`
+	RequestsOK          int64            `json:"requests_ok"`
+	RequestsDropped     int64            `json:"requests_dropped"`
+	LatencyP50          time.Duration    `json:"latency_p50"`
+	LatencyP95          time.Duration    `json:"latency_p95"`
+	LatencyP99          time.Duration    `json:"latency_p99"`
+	VariantDistribution map[string]int64 `json:"variant_distribution"`
+	FinalizedAt         time.Time        `json:"finalized_at"`
 }
 
 // AttackStats holds finalized stats for a completed attack, embedding the
