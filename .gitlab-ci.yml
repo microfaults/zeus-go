@@ -56,6 +56,17 @@ go-verify:
     - go build ./...
     - go test ./...
 
+go-race:
+  stage: check
+  image: golang:1.25
+  variables:
+    CGO_ENABLED: "1"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+  script:
+    - go test -race -count=1 ./...
+
 # OpenAPI spec freshness gate.
 # Fails the pipeline if generated docs/swagger.{yaml,json} is stale relative
 # to handler code. Triggers only on pushes to develop and main per project
