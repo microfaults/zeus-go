@@ -2,7 +2,7 @@
  * engine.js - DSL v2 tree-walking execution engine for k6.
  *
  * Replaces the v1 topoSort + flat step list with a recursive tree walker.
- * Node types: sequence, parallel, delay, optional, request.
+ * Node types: sequence, parallel, delay, optional, request, repeat, if.
  *
  * Execution model per VU iteration:
  *   1. Walk the root node tree recursively
@@ -17,7 +17,31 @@
 import http from "k6/http";
 import { check, sleep } from "k6";
 import { generateMetaTraceID, withTracing } from "./tracing.js";
-import { resolveObject } from "./template.js";
+import { resolveObject, evalTruthy, evalInt } from "./template.js";
+
+// ── Constants ───────────────────────────────────────────────────────
+
+const NODE_SEQUENCE = "sequence";
+const NODE_PARALLEL = "parallel";
+const NODE_DELAY = "delay";
+const NODE_OPTIONAL = "optional";
+const NODE_REQUEST = "request";
+const NODE_REPEAT = "repeat";
+const NODE_IF = "if";
+
+/** Default safety cap for `repeat` when only `while` is set without `max`. */
+const REPEAT_DEFAULT_MAX = 100;
+
+const JSONPATH_PREFIX = "jsonpath:";
+
+/** HTTP method dispatch: maps method string to k6 http function. */
+const HTTP_METHODS = {
+  GET: (url, _body, params) => http.get(url, params),
+  POST: (url, body, params) => http.post(url, body, params),
+  PUT: (url, body, params) => http.put(url, body, params),
+  PATCH: (url, body, params) => http.patch(url, body, params),
+  DELETE: (url, _body, params) => http.del(url, null, params),
+};
 
 // ── Scope chain ─────────────────────────────────────────────────────
 //
@@ -28,33 +52,32 @@ import { resolveObject } from "./template.js";
 
 function createScope(parent) {
   return {
-    parent: parent,
+    parent,
     entries: {},
 
-    set: function (id, value) {
+    set(id, value) {
       this.entries[id] = value;
     },
 
-    merge: function (entries) {
-      for (var k of Object.keys(entries)) {
-        this.entries[k] = entries[k];
+    merge(incoming) {
+      for (const [k, v] of Object.entries(incoming)) {
+        this.entries[k] = v;
       }
     },
 
-    resolve: function (path) {
-      var parts = path.split(".");
-      var root = parts[0];
+    resolve(path) {
+      const parts = path.split(".");
+      const root = parts[0];
       if (root in this.entries) {
-        var current = this.entries[root];
-        for (var i = 1; i < parts.length; i++) {
-          if (current === null || current === undefined) return undefined;
-          var idx = parseInt(parts[i]);
+        let current = this.entries[root];
+        for (let i = 1; i < parts.length; i++) {
+          if (current == null) return undefined;
+          const idx = parseInt(parts[i]);
           current = isNaN(idx) ? current[parts[i]] : current[idx];
         }
         return current;
       }
-      if (this.parent) return this.parent.resolve(path);
-      return undefined;
+      return this.parent ? this.parent.resolve(path) : undefined;
     },
   };
 }
@@ -63,12 +86,10 @@ function createScope(parent) {
 
 function pickVariant(variants) {
   if (!variants || variants.length === 0) return null;
-  var total = variants.reduce(function (s, v) {
-    return s + (v.weight || 0);
-  }, 0);
+  const total = variants.reduce((sum, v) => sum + (v.weight || 0), 0);
   if (total === 0) return null;
-  var r = Math.random() * total;
-  for (var i = 0; i < variants.length; i++) {
+  let r = Math.random() * total;
+  for (let i = 0; i < variants.length; i++) {
     r -= variants[i].weight || 0;
     if (r <= 0) return { variant: variants[i], index: i };
   }
@@ -79,10 +100,10 @@ function pickVariant(variants) {
  * Set a value at a dot-path inside an object, creating intermediates.
  */
 function applyPatch(obj, dotPath, value) {
-  var parts = dotPath.split(".");
-  var current = obj;
-  for (var i = 0; i < parts.length - 1; i++) {
-    if (current[parts[i]] === undefined || current[parts[i]] === null) {
+  const parts = dotPath.split(".");
+  let current = obj;
+  for (let i = 0; i < parts.length - 1; i++) {
+    if (current[parts[i]] == null) {
       current[parts[i]] = {};
     }
     current = current[parts[i]];
@@ -94,12 +115,12 @@ function applyPatch(obj, dotPath, value) {
 
 function sleepDelay(spec, persona) {
   if (!spec) return;
-  if (spec.persona_key && persona && persona.delays) {
-    var resolved = persona.delays[spec.persona_key];
+  if (spec.persona_key && persona?.delays) {
+    const resolved = persona.delays[spec.persona_key];
     if (resolved) spec = resolved;
   }
   if (typeof spec.min_ms === "number" && typeof spec.max_ms === "number") {
-    var ms = spec.min_ms + Math.random() * (spec.max_ms - spec.min_ms);
+    const ms = spec.min_ms + Math.random() * (spec.max_ms - spec.min_ms);
     sleep(ms / 1000);
   }
 }
@@ -107,13 +128,12 @@ function sleepDelay(spec, persona) {
 // ── JSON path accessor ──────────────────────────────────────────────
 
 function getJsonPath(obj, path) {
-  if (path.startsWith("$.")) path = path.substring(2);
-  var parts = path.split(".");
-  var current = obj;
-  for (var i = 0; i < parts.length; i++) {
-    if (current === null || current === undefined) return undefined;
-    var idx = parseInt(parts[i]);
-    current = isNaN(idx) ? current[parts[i]] : current[idx];
+  let p = path.startsWith("$.") ? path.substring(2) : path;
+  let current = obj;
+  for (const part of p.split(".")) {
+    if (current == null) return undefined;
+    const idx = parseInt(part);
+    current = isNaN(idx) ? current[part] : current[idx];
   }
   return current;
 }
@@ -121,16 +141,12 @@ function getJsonPath(obj, path) {
 // ── Probability gate ────────────────────────────────────────────────
 
 function shouldFire(probability, persona) {
-  if (probability === undefined || probability === null) return true;
-  var prob;
+  if (probability == null) return true;
+  let prob;
   if (typeof probability === "number") {
     prob = probability;
   } else if (typeof probability === "string") {
-    prob =
-      persona && persona.probabilities
-        ? persona.probabilities[probability]
-        : undefined;
-    if (prob === undefined) prob = 1.0;
+    prob = persona?.probabilities?.[probability] ?? 1.0;
   } else {
     prob = 1.0;
   }
@@ -140,107 +156,93 @@ function shouldFire(probability, persona) {
 // ── Request preparation and response processing ─────────────────────
 
 function prepareRequest(node, scope, ctx) {
-  var body = node.body ? JSON.parse(JSON.stringify(node.body)) : null;
-  var headers = node.headers ? Object.assign({}, node.headers) : {};
-  var path = node.path;
-  var method = (node.method || "GET").toUpperCase();
-  var dataOverrides = null;
+  let body = node.body ? JSON.parse(JSON.stringify(node.body)) : null;
+  let headers = node.headers ? { ...node.headers } : {};
+  let path = node.path;
+  let method = (node.method || "GET").toUpperCase();
+  let dataOverrides = null;
 
   // Variant selection
-  var variantIndex = -1;
-  if (node.variants && node.variants.length > 0) {
-    var pick = pickVariant(node.variants);
+  let variantIndex = -1;
+  if (node.variants?.length > 0) {
+    const pick = pickVariant(node.variants);
     if (pick) {
       variantIndex = pick.index;
-      var working = { body: body, headers: headers, path: path, method: method };
-      var setMap = pick.variant.set || {};
-      for (var key of Object.keys(setMap)) {
+      const working = { body, headers, path, method };
+      const setMap = pick.variant.set || {};
+      for (const [key, value] of Object.entries(setMap)) {
         if (key.startsWith("data.")) {
           if (!dataOverrides) dataOverrides = {};
-          applyPatch(dataOverrides, key.substring(5), setMap[key]);
+          applyPatch(dataOverrides, key.substring(5), value);
         } else {
-          applyPatch(working, key, setMap[key]);
+          applyPatch(working, key, value);
         }
       }
-      body = working.body;
-      headers = working.headers;
-      path = working.path;
-      method = working.method;
+      ({ body, headers, path, method } = working);
     }
   }
 
   // Resolve templates
-  var templateCtx = {
+  const templateCtx = {
     data: ctx.data,
     env: __ENV,
-    _resolveSteps: function (p) {
-      return scope.resolve(p);
-    },
+    _resolveSteps: (p) => scope.resolve(p),
     _dataOverrides: dataOverrides,
   };
-  var bundle = {
-    path: path,
-    headers: headers,
-    body: body,
-    _extract: node.extract || {},
-  };
-  var resolved = resolveObject(bundle, templateCtx);
+  const resolved = resolveObject(
+    { path, headers, body, _extract: node.extract || {} },
+    templateCtx,
+  );
 
-  var url = ctx.baseURL + resolved.path;
+  const url = ctx.baseURL + resolved.path;
 
-  var params = withTracing(
+  const params = withTracing(
     { headers: resolved.headers, tags: { name: node.id || "unnamed" } },
     ctx.traceID,
-    ctx.workflowLabel
+    ctx.workflowLabel,
   );
 
   if (node.timeout_ms) {
-    params.timeout = String(node.timeout_ms) + "ms";
+    params.timeout = `${node.timeout_ms}ms`;
   }
 
   // Encode body based on Content-Type
-  var encodedBody = null;
-  if (resolved.body !== null && resolved.body !== undefined) {
-    var ct = (resolved.headers["Content-Type"] || "").toLowerCase();
+  let encodedBody = null;
+  if (resolved.body != null) {
+    const ct = (resolved.headers["Content-Type"] || "").toLowerCase();
     encodedBody = ct.includes("application/json")
       ? JSON.stringify(resolved.body)
       : resolved.body;
   }
 
   return {
-    method: method,
-    url: url,
+    method,
+    url,
     body: encodedBody,
-    params: params,
+    params,
     resolvedExtracts: resolved._extract,
-    variantIndex: variantIndex,
+    variantIndex,
     batchEntry: [method, url, encodedBody, params],
   };
 }
 
 function processResponse(node, response, resolvedExtracts, scope) {
-  var passed = true;
+  let passed = true;
 
-  if (node.expect && node.expect.status) {
-    var label =
-      (node.id || "unnamed") +
-      " status in [" +
-      node.expect.status.join(",") +
-      "]";
+  if (node.expect?.status) {
+    const label = `${node.id || "unnamed"} status in [${node.expect.status.join(",")}]`;
     passed = check(response, {
-      [label]: function (r) {
-        return node.expect.status.includes(r.status);
-      },
+      [label]: (r) => node.expect.status.includes(r.status),
     });
   }
 
   if (node.extract && node.id) {
-    var extracted = {};
-    for (var [key, expr] of Object.entries(node.extract)) {
-      if (typeof expr === "string" && expr.startsWith("jsonpath:")) {
+    const extracted = {};
+    for (const [key, expr] of Object.entries(node.extract)) {
+      if (typeof expr === "string" && expr.startsWith(JSONPATH_PREFIX)) {
         try {
-          var respBody = JSON.parse(response.body);
-          extracted[key] = getJsonPath(respBody, expr.substring(9));
+          const respBody = JSON.parse(response.body);
+          extracted[key] = getJsonPath(respBody, expr.substring(JSONPATH_PREFIX.length));
         } catch (_e) {
           extracted[key] = undefined;
         }
@@ -256,21 +258,33 @@ function processResponse(node, response, resolvedExtracts, scope) {
 
 // ── Node walkers ────────────────────────────────────────────────────
 
+/** Dispatch table for node type → walker function. */
+const NODE_WALKERS = {
+  [NODE_SEQUENCE]: walkSequence,
+  [NODE_PARALLEL]: walkParallel,
+  [NODE_DELAY]: walkDelay,
+  [NODE_OPTIONAL]: walkOptional,
+  [NODE_REQUEST]: walkRequest,
+  [NODE_REPEAT]: walkRepeat,
+  [NODE_IF]: walkIf,
+};
+
+/**
+ * Build a template-resolution context that reads steps from the given scope.
+ * Shared by walkRepeat and walkIf for condition/count evaluation.
+ */
+function templateContextFor(scope, ctx) {
+  return {
+    data: ctx.data,
+    env: __ENV,
+    _resolveSteps: (p) => scope.resolve(p),
+  };
+}
+
 function walkNode(node, scope, ctx) {
-  switch (node.type) {
-    case "sequence":
-      return walkSequence(node, scope, ctx);
-    case "parallel":
-      return walkParallel(node, scope, ctx);
-    case "delay":
-      return walkDelay(node, scope, ctx);
-    case "optional":
-      return walkOptional(node, scope, ctx);
-    case "request":
-      return walkRequest(node, scope, ctx);
-    default:
-      throw new Error('engine: unknown node type "' + node.type + '"');
-  }
+  const walker = NODE_WALKERS[node.type];
+  if (!walker) throw new Error(`engine: unknown node type "${node.type}"`);
+  return walker(node, scope, ctx);
 }
 
 /**
@@ -278,11 +292,11 @@ function walkNode(node, scope, ctx) {
  * extracts. Short-circuits on child failure.
  */
 function walkSequence(node, scope, ctx) {
-  var seqScope = createScope(scope);
-  var ok = true;
+  const seqScope = createScope(scope);
+  let ok = true;
 
-  for (var i = 0; i < node.children.length; i++) {
-    ok = walkNode(node.children[i], seqScope, ctx);
+  for (const child of node.children) {
+    ok = walkNode(child, seqScope, ctx);
     if (!ok) break;
   }
 
@@ -300,42 +314,31 @@ function walkSequence(node, scope, ctx) {
  * with scope isolation for composite children.
  */
 function walkParallel(node, scope, ctx) {
-  var children = node.children || [];
+  const children = node.children || [];
   if (children.length === 0) return true;
 
-  var allRequests = children.every(function (c) {
-    return c.type === "request";
-  });
+  const allRequests = children.every((c) => c.type === NODE_REQUEST);
 
-  if (allRequests && children.length > 1) {
-    return walkParallelBatch(node, scope, ctx);
-  }
-  return walkParallelSequential(node, scope, ctx);
+  return allRequests && children.length > 1
+    ? walkParallelBatch(node, scope, ctx)
+    : walkParallelSequential(node, scope, ctx);
 }
 
 function walkParallelBatch(node, scope, ctx) {
-  var children = node.children;
-  var preparations = [];
-
-  for (var i = 0; i < children.length; i++) {
-    var childScope = createScope(scope);
-    var prep = prepareRequest(children[i], childScope, ctx);
-    preparations.push({ prep: prep, scope: childScope, node: children[i] });
-  }
-
-  var batchEntries = preparations.map(function (p) {
-    return p.prep.batchEntry;
+  const { children } = node;
+  const preparations = children.map((child) => {
+    const childScope = createScope(scope);
+    const prep = prepareRequest(child, childScope, ctx);
+    return { prep, scope: childScope, node: child };
   });
-  var responses = http.batch(batchEntries);
 
-  var passCount = 0;
-  for (var j = 0; j < children.length; j++) {
-    var ok = processResponse(
-      preparations[j].node,
-      responses[j],
-      preparations[j].prep.resolvedExtracts,
-      preparations[j].scope
-    );
+  const batchEntries = preparations.map((p) => p.prep.batchEntry);
+  const responses = http.batch(batchEntries);
+
+  let passCount = 0;
+  for (let j = 0; j < children.length; j++) {
+    const { node: childNode, prep, scope: childScope } = preparations[j];
+    const ok = processResponse(childNode, responses[j], prep.resolvedExtracts, childScope);
     if (ok) passCount++;
   }
 
@@ -344,13 +347,13 @@ function walkParallelBatch(node, scope, ctx) {
 }
 
 function walkParallelSequential(node, scope, ctx) {
-  var children = node.children;
-  var childEntries = [];
-  var passCount = 0;
+  const { children } = node;
+  const childEntries = [];
+  let passCount = 0;
 
-  for (var i = 0; i < children.length; i++) {
-    var childScope = createScope(scope);
-    var ok = walkNode(children[i], childScope, ctx);
+  for (const child of children) {
+    const childScope = createScope(scope);
+    const ok = walkNode(child, childScope, ctx);
     if (ok) passCount++;
     childEntries.push({ scope: childScope });
   }
@@ -368,11 +371,10 @@ function checkWaitPolicy(wait, passCount, totalCount) {
 }
 
 function mergeParallelChildren(node, scope, childEntries) {
-  var merged = {};
-  for (var i = 0; i < childEntries.length; i++) {
-    var entries = childEntries[i].scope.entries;
-    for (var k of Object.keys(entries)) {
-      merged[k] = entries[k];
+  const merged = {};
+  for (const entry of childEntries) {
+    for (const [k, v] of Object.entries(entry.scope.entries)) {
+      merged[k] = v;
     }
   }
 
@@ -388,7 +390,7 @@ function walkDelay(node, _scope, ctx) {
   if (node.persona_key) {
     sleepDelay({ persona_key: node.persona_key }, ctx.persona);
   } else if (typeof node.min_ms === "number" && typeof node.max_ms === "number") {
-    var ms = node.min_ms + Math.random() * (node.max_ms - node.min_ms);
+    const ms = node.min_ms + Math.random() * (node.max_ms - node.min_ms);
     sleep(ms / 1000);
   }
   return true;
@@ -396,43 +398,92 @@ function walkDelay(node, _scope, ctx) {
 
 /** Optional: probability gate. Scope-transparent — child writes to parent. */
 function walkOptional(node, scope, ctx) {
-  if (!shouldFire(node.probability, ctx.persona)) {
-    return true;
+  return shouldFire(node.probability, ctx.persona)
+    ? walkNode(node.child, scope, ctx)
+    : true;
+}
+
+/**
+ * Repeat: run `child` multiple times. Iteration modes (checked in priority
+ * order):
+ *   - count: literal integer N
+ *   - count_template: template expression resolved once to an integer
+ *   - while: template expression re-evaluated before each iteration; max
+ *            caps the iteration count (default REPEAT_DEFAULT_MAX)
+ *
+ * All iterations share one loopScope chained to the parent, so iteration
+ * K+1 observes iteration K's extracts via {{steps.*}}. Later-iteration
+ * writes to the same extract id overwrite earlier ones. loopScope merges
+ * back to the parent when the loop ends (or is bound to node.id).
+ *
+ * Short-circuits on child failure (a failed iteration ends the loop).
+ */
+function walkRepeat(node, scope, ctx) {
+  const loopScope = createScope(scope);
+  let iterations;
+  let useWhile = false;
+
+  if (typeof node.count === "number") {
+    iterations = node.count;
+  } else if (typeof node.count_template === "string") {
+    iterations = evalInt(node.count_template, templateContextFor(scope, ctx));
+  } else if (typeof node.while === "string") {
+    useWhile = true;
+    iterations = typeof node.max === "number" ? node.max : REPEAT_DEFAULT_MAX;
+  } else {
+    throw new Error(
+      "engine: repeat node requires count, count_template, or while",
+    );
   }
-  return walkNode(node.child, scope, ctx);
+
+  let ok = true;
+  for (let i = 0; i < iterations; i++) {
+    if (useWhile && !evalTruthy(node.while, templateContextFor(loopScope, ctx))) {
+      break;
+    }
+    ok = walkNode(node.child, loopScope, ctx);
+    if (!ok) break;
+  }
+
+  if (node.id) {
+    scope.set(node.id, loopScope.entries);
+  } else {
+    scope.merge(loopScope.entries);
+  }
+  return ok;
+}
+
+/**
+ * If: evaluate `condition` as a template expression, take the `then` branch
+ * when truthy and `else` branch otherwise. Scope-transparent: whichever
+ * branch runs writes to the parent scope. Returns true (success) when the
+ * condition is falsy and no `else` is provided — a no-op, not a failure.
+ */
+function walkIf(node, scope, ctx) {
+  if (evalTruthy(node.condition, templateContextFor(scope, ctx))) {
+    return walkNode(node.then, scope, ctx);
+  }
+  if (node.else) {
+    return walkNode(node.else, scope, ctx);
+  }
+  return true;
 }
 
 /** Request: HTTP call with variant selection, template resolution, extracts. */
 function walkRequest(node, scope, ctx) {
   // Before-delay (opt-in only, no default)
-  if (node.before_delay !== undefined && node.before_delay !== null) {
+  if (node.before_delay != null) {
     sleepDelay(node.before_delay, ctx.persona);
   }
 
-  var prep = prepareRequest(node, scope, ctx);
+  const prep = prepareRequest(node, scope, ctx);
 
-  var res;
-  switch (prep.method) {
-    case "GET":
-      res = http.get(prep.url, prep.params);
-      break;
-    case "POST":
-      res = http.post(prep.url, prep.body, prep.params);
-      break;
-    case "PUT":
-      res = http.put(prep.url, prep.body, prep.params);
-      break;
-    case "PATCH":
-      res = http.patch(prep.url, prep.body, prep.params);
-      break;
-    case "DELETE":
-      res = http.del(prep.url, null, prep.params);
-      break;
-    default:
-      res = http.request(prep.method, prep.url, prep.body, prep.params);
-  }
+  const httpFn = HTTP_METHODS[prep.method];
+  const res = httpFn
+    ? httpFn(prep.url, prep.body, prep.params)
+    : http.request(prep.method, prep.url, prep.body, prep.params);
 
-  var ok = processResponse(node, res, prep.resolvedExtracts, scope);
+  const ok = processResponse(node, res, prep.resolvedExtracts, scope);
 
   // After-delay: explicit override, explicit null (suppress), or default
   if (node.after_delay === null) {
@@ -458,78 +509,89 @@ function walkRequest(node, scope, ctx) {
  * @returns {object} Engine with options, setup(), run(), teardown()
  */
 export function createEngine(flowPath, personaPath, dataPath) {
-  var flow = JSON.parse(open(flowPath));
-  var persona = JSON.parse(open(personaPath));
-  var fileData = dataPath ? JSON.parse(open(dataPath)) : null;
+  const flow = JSON.parse(open(flowPath));
+  const persona = JSON.parse(open(personaPath));
+  const fileData = dataPath ? JSON.parse(open(dataPath)) : null;
 
   if (flow.version !== "2" || !flow.root) {
     throw new Error(
-      'engine: flow must be DSL v2 format (version: "2" with root node). ' +
-        "See docs/workflow-dsl-v2.md for the migration guide."
+      "engine: flow must be DSL v2 format (version: \"2\" with root node). " +
+        "See docs/workflow-dsl-v2.md for the migration guide.",
     );
   }
 
-  var baseURL = __ENV.BASE_URL || flow.base_url || "http://localhost:8080";
-  var defaultDelay = flow.default_delay || null;
-  var metaTraceID = generateMetaTraceID();
-  var workflowLabel = __ENV.ZEUS_WORKFLOW_LABEL || flow.name;
+  const baseURL = __ENV.BASE_URL || flow.base_url || "http://localhost:8080";
+  const defaultDelay = flow.default_delay || null;
+  const metaTraceID = generateMetaTraceID();
+  const workflowLabel = __ENV.ZEUS_WORKFLOW_LABEL || flow.name;
 
-  var engineOptions = {
-    vus: __ENV.VUS ? parseInt(__ENV.VUS) : 10,
-    duration: __ENV.DURATION || "5m",
-    thresholds: flow.thresholds || {
-      http_req_failed: ["rate<0.1"],
-      http_req_duration: ["p(95)<2000"],
+  const vus = __ENV.VUS ? parseInt(__ENV.VUS) : 10;
+  const duration = __ENV.DURATION || "5m";
+  const rpsPerVU = flow.estimated_rps_per_vu || 1;
+  const targetRPS = vus * rpsPerVU;
+
+  // Open-loop generator: hold offered RPS constant across phases so a cached
+  // service does not implicitly inflate load on un-frozen services. See the
+  // "closed-loop generator" entry under VISION.md "Known confounds".
+  const options = {
+    scenarios: {
+      workflow: {
+        executor: "constant-arrival-rate",
+        rate: targetRPS,
+        timeUnit: "1s",
+        duration: duration,
+        preAllocatedVUs: vus,
+        maxVUs: vus * 4,
+      },
+    },
+    thresholds: {
+      ...(flow.thresholds || {
+        http_req_failed: ["rate<0.1"],
+        http_req_duration: ["p(95)<2000"],
+      }),
+      dropped_iterations: ["count==0"],
     },
   };
 
   return {
-    flow: flow,
-    options: engineOptions,
+    flow,
+    options,
 
-    setup: function () {
-      var data = fileData;
+    setup() {
+      let data = fileData;
       if (__ENV.ZEUS_DATASET_ENDPOINT) {
-        var res = http.get(__ENV.ZEUS_DATASET_ENDPOINT, {
+        const res = http.get(__ENV.ZEUS_DATASET_ENDPOINT, {
           headers: { Accept: "application/json" },
         });
         if (res.status !== 200) {
           throw new Error(
-            "engine: failed to fetch dataset from " +
-              __ENV.ZEUS_DATASET_ENDPOINT +
-              ": HTTP " +
-              res.status
+            `engine: failed to fetch dataset from ${__ENV.ZEUS_DATASET_ENDPOINT}: HTTP ${res.status}`,
           );
         }
         data = JSON.parse(res.body);
       }
       if (!data) {
         throw new Error(
-          "engine: no dataset available. Set DATA env var or ZEUS_DATASET_ENDPOINT."
+          "engine: no dataset available. Set DATA env var or ZEUS_DATASET_ENDPOINT.",
         );
       }
-      return {
-        data: data,
-        metaTraceID: metaTraceID,
-        workflowLabel: workflowLabel,
-      };
+      return { data, metaTraceID, workflowLabel };
     },
 
-    run: function (setupData) {
-      var rootScope = createScope(null);
-      var ctx = {
-        flow: flow,
-        persona: persona,
+    run(setupData) {
+      const rootScope = createScope(null);
+      walkNode(flow.root, rootScope, {
+        flow,
+        persona,
         data: setupData.data,
-        baseURL: baseURL,
+        baseURL,
         traceID: setupData.metaTraceID,
         workflowLabel: setupData.workflowLabel,
-        defaultDelay: defaultDelay,
-      };
-      walkNode(flow.root, rootScope, ctx);
+        defaultDelay,
+      });
     },
 
-    teardown: function (_setupData) {
+    teardown(_setupData) {
       // No-op: zeus owns the run lifecycle; k6 does not self-register.
     },
   };

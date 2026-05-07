@@ -25,13 +25,15 @@ type TargetSpec struct {
 
 // AttackConfig defines a single targeted attack.
 type AttackConfig struct {
-	ID          string        `json:"id"`
-	Target      TargetSpec    `json:"target"`
-	Rate        int           `json:"rate"`
-	Duration    time.Duration `json:"duration"`
-	WorkloadRef string        `json:"workload_ref,omitempty"`
-	DedupBypass string        `json:"dedup_bypass,omitempty"`
-	MetaTraceID string        `json:"meta_trace_id,omitempty"`
+	ID            string        `json:"id"`
+	Target        TargetSpec    `json:"target"`
+	Rate          int           `json:"rate"`
+	Duration      time.Duration `json:"duration"`
+	DedupBypass   string        `json:"dedup_bypass,omitempty"`
+	MetaTraceID   string        `json:"meta_trace_id,omitempty"`
+	ExperimentID  string        `json:"experiment_id,omitempty"`
+	RunRef        string        `json:"run_ref,omitempty"`
+	WorkflowLabel string        `json:"workflow_label,omitempty"`
 }
 
 // Validate checks the attack config before execution.
@@ -55,7 +57,7 @@ func (c *AttackConfig) Validate() error {
 type Attack struct {
 	Config    AttackConfig  `json:"config"`
 	Status    string        `json:"status"`
-	StartedAt time.Time    `json:"started_at"`
+	StartedAt time.Time     `json:"started_at"`
 	Result    *AttackResult `json:"result,omitempty"`
 	cancel    context.CancelFunc
 }
@@ -208,8 +210,15 @@ func (m *Manager) buildTargeter(cfg AttackConfig, bypass dedup.DedupBypass) vege
 			}
 		}
 
+		entries := make(map[string]string)
 		if cfg.MetaTraceID != "" {
-			trace.InjectBaggageHeader(t.Header, cfg.MetaTraceID)
+			entries[trace.MetaTraceKey] = cfg.MetaTraceID
+		}
+		if cfg.WorkflowLabel != "" {
+			entries["atropos.workflow"] = cfg.WorkflowLabel
+		}
+		if len(entries) > 0 {
+			trace.InjectLabeledBaggage(t.Header, entries)
 		}
 
 		return nil

@@ -26,6 +26,11 @@
 
 const EXPR_RE = /\{\{(.+?)\}\}/g;
 
+const PREFIX_DATA = "data.";
+const PREFIX_STEPS = "steps.";
+const PREFIX_ENV = "env.";
+const PREFIX_JSONPATH = "jsonpath:";
+
 /**
  * Evaluate a single template expression against the context.
  */
@@ -33,12 +38,11 @@ function evaluateExpression(expr, context) {
   expr = expr.trim();
 
   // data.<collection>.<field>
-  if (expr.startsWith("data.")) {
-    const parts = expr.split(".");
-    const collection = parts[1];
-    const field = parts.slice(2).join(".");
+  if (expr.startsWith(PREFIX_DATA)) {
+    const [, collection, ...rest] = expr.split(".");
+    const field = rest.join(".");
 
-    // Check variant overrides first
+    // Check variant overrides first.
     if (context._dataOverrides) {
       const overridePath = collection + (field ? "." + field : "");
       const override = getNestedField(context._dataOverrides, overridePath);
@@ -46,28 +50,23 @@ function evaluateExpression(expr, context) {
     }
 
     if (!context._dataCache[collection]) {
-      const items = context.data ? context.data[collection] : undefined;
-      if (!items || items.length === 0) {
-        return undefined;
-      }
+      const items = context.data?.[collection];
+      if (!items || items.length === 0) return undefined;
       context._dataCache[collection] =
         items[Math.floor(Math.random() * items.length)];
     }
 
-    const item = context._dataCache[collection];
-    return getNestedField(item, field);
+    return getNestedField(context._dataCache[collection], field);
   }
 
   // steps.<id>.<key> — scope-chain resolution in v2, flat lookup fallback
-  if (expr.startsWith("steps.")) {
-    const path = expr.substring(6);
-    if (context._resolveSteps) {
-      return context._resolveSteps(path);
-    }
-    const parts = path.split(".");
-    const stepName = parts[0];
-    const key = parts.slice(1).join(".");
-    const stepData = context.steps ? context.steps[stepName] : undefined;
+  if (expr.startsWith(PREFIX_STEPS)) {
+    const path = expr.substring(PREFIX_STEPS.length);
+    if (context._resolveSteps) return context._resolveSteps(path);
+
+    const [stepName, ...keyParts] = path.split(".");
+    const key = keyParts.join(".");
+    const stepData = context.steps?.[stepName];
     if (!stepData) return undefined;
     return getNestedField(stepData, key);
   }
@@ -88,9 +87,8 @@ function evaluateExpression(expr, context) {
   }
 
   // env.VAR_NAME
-  if (expr.startsWith("env.")) {
-    const varName = expr.substring(4);
-    return __ENV[varName] || "";
+  if (expr.startsWith(PREFIX_ENV)) {
+    return __ENV[expr.substring(PREFIX_ENV.length)] ?? "";
   }
 
   return undefined;
@@ -101,14 +99,70 @@ function evaluateExpression(expr, context) {
  */
 function getNestedField(obj, path) {
   if (!path) return obj;
-  const parts = path.split(".");
   let current = obj;
-  for (const part of parts) {
-    if (current === null || current === undefined) return undefined;
+  for (const part of path.split(".")) {
+    if (current == null) return undefined;
     const idx = parseInt(part);
     current = isNaN(idx) ? current[part] : current[idx];
   }
   return current;
+}
+
+/**
+ * Template-language truthiness. Falsy: null, undefined, false, 0, NaN,
+ * empty string, empty array, empty plain object. Everything else is truthy.
+ *
+ * Matches Jinja/Liquid/Handlebars conventions more than raw JS truthiness
+ * so that an empty search result ({}) or missing extract (undefined) both
+ * evaluate falsy in an `if` node's condition.
+ */
+export function isTruthy(value) {
+  if (value == null) return false;
+  if (value === false) return false;
+  if (typeof value === "number" && (value === 0 || Number.isNaN(value))) return false;
+  if (value === "") return false;
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === "object") return Object.keys(value).length > 0;
+  return true;
+}
+
+/**
+ * Resolve a template expression string and apply template-language truthiness.
+ * Used by the `if` node type and the `repeat` node's `while` condition.
+ */
+export function evalTruthy(expr, context) {
+  const scopedContext = {
+    data: context.data,
+    steps: context.steps ?? null,
+    env: context.env,
+    _dataCache: {},
+    _resolveSteps: context._resolveSteps ?? null,
+    _dataOverrides: context._dataOverrides ?? null,
+  };
+  return isTruthy(resolveTemplate(expr, scopedContext));
+}
+
+/**
+ * Resolve a template expression string and parse as integer. Throws if the
+ * resolved value is not a finite integer. Used by `repeat.count_template`.
+ */
+export function evalInt(expr, context) {
+  const scopedContext = {
+    data: context.data,
+    steps: context.steps ?? null,
+    env: context.env,
+    _dataCache: {},
+    _resolveSteps: context._resolveSteps ?? null,
+    _dataOverrides: context._dataOverrides ?? null,
+  };
+  const resolved = resolveTemplate(expr, scopedContext);
+  const n = typeof resolved === "number" ? resolved : parseInt(resolved);
+  if (!Number.isFinite(n)) {
+    throw new Error(
+      `template: expected integer from "${expr}", got ${JSON.stringify(resolved)}`,
+    );
+  }
+  return Math.trunc(n);
 }
 
 /**
@@ -119,16 +173,16 @@ function getNestedField(obj, path) {
 export function resolveTemplate(templateStr, context) {
   if (typeof templateStr !== "string") return templateStr;
 
-  // Pass through jsonpath: prefixed strings for post-request processing
-  if (templateStr.startsWith("jsonpath:")) return templateStr;
+  // Pass through jsonpath: prefixed strings for post-request processing.
+  if (templateStr.startsWith(PREFIX_JSONPATH)) return templateStr;
 
-  // If the entire string is a single expression, return its native type
+  // If the entire string is a single expression, return its native type.
   const fullMatch = templateStr.match(/^\{\{(.+?)\}\}$/);
   if (fullMatch && templateStr.indexOf("{{", 2) === -1) {
     return evaluateExpression(fullMatch[1], context);
   }
 
-  // String interpolation: replace all {{...}} with stringified values
+  // String interpolation: replace all {{...}} with stringified values.
   return templateStr.replace(EXPR_RE, (_, expr) => {
     const value = evaluateExpression(expr, context);
     return value !== undefined ? String(value) : "";
@@ -143,23 +197,23 @@ export function resolveTemplate(templateStr, context) {
 export function resolveObject(obj, context) {
   const scopedContext = {
     data: context.data,
-    steps: context.steps || null,
+    steps: context.steps ?? null,
     env: context.env,
     _dataCache: {},
-    _resolveSteps: context._resolveSteps || null,
-    _dataOverrides: context._dataOverrides || null,
+    _resolveSteps: context._resolveSteps ?? null,
+    _dataOverrides: context._dataOverrides ?? null,
   };
   return resolveDeep(obj, scopedContext);
 }
 
 function resolveDeep(obj, context) {
-  if (obj === null || obj === undefined) return obj;
+  if (obj == null) return obj;
   if (typeof obj === "string") return resolveTemplate(obj, context);
   if (Array.isArray(obj)) return obj.map((item) => resolveDeep(item, context));
   if (typeof obj === "object") {
     const result = {};
-    for (const key of Object.keys(obj)) {
-      result[key] = resolveDeep(obj[key], context);
+    for (const [key, value] of Object.entries(obj)) {
+      result[key] = resolveDeep(value, context);
     }
     return result;
   }

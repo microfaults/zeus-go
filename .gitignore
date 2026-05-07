@@ -1,2 +1,7 @@
 .firecrawl/
+
+# Plugin scratch
+.claude/
+
 /zeus
+/gen-dataset

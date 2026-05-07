@@ -23,16 +23,29 @@ func InjectBaggageHTTP(req *http.Request, metaTraceID string) {
 	}
 }
 
+// InjectLabeledBaggage adds multiple key=value pairs to the W3C Baggage header,
+// comma-separated. Existing entries are preserved.
+func InjectLabeledBaggage(h http.Header, entries map[string]string) {
+	var parts []string
+	for k, v := range entries {
+		parts = append(parts, fmt.Sprintf("%s=%s", k, v))
+	}
+	if len(parts) == 0 {
+		return
+	}
+	addition := strings.Join(parts, ",")
+	existing := h.Get(BaggageHeader)
+	if existing == "" {
+		h.Set(BaggageHeader, addition)
+	} else {
+		h.Set(BaggageHeader, existing+","+addition)
+	}
+}
+
 // InjectBaggageHeader adds a meta-trace-id entry to a raw http.Header map.
 // Used for vegeta targets which expose Header directly.
 func InjectBaggageHeader(h http.Header, metaTraceID string) {
-	entry := fmt.Sprintf("%s=%s", MetaTraceKey, metaTraceID)
-	existing := h.Get(BaggageHeader)
-	if existing == "" {
-		h.Set(BaggageHeader, entry)
-	} else {
-		h.Set(BaggageHeader, existing+","+entry)
-	}
+	InjectLabeledBaggage(h, map[string]string{MetaTraceKey: metaTraceID})
 }
 
 // ExtractMetaTraceID parses the baggage header and returns the meta-trace-id value.

@@ -8,15 +8,15 @@ import (
 
 // AttackResult aggregates vegeta metrics for a completed attack.
 type AttackResult struct {
-	TotalRequests uint64            `json:"total_requests"`
-	Duration      time.Duration     `json:"duration"`
-	RateActual    float64           `json:"rate_actual"`
-	Success       float64           `json:"success"`
-	StatusCodes   map[string]int    `json:"status_codes"`
-	Latencies     LatencySummary    `json:"latencies"`
-	BytesIn       BytesSummary      `json:"bytes_in"`
-	BytesOut      BytesSummary      `json:"bytes_out"`
-	Errors        []string          `json:"errors,omitempty"`
+	TotalRequests uint64         `json:"total_requests"`
+	Duration      time.Duration  `json:"duration"`
+	RateActual    float64        `json:"rate_actual"`
+	Success       float64        `json:"success"`
+	StatusCodes   map[string]int `json:"status_codes"`
+	Latencies     LatencySummary `json:"latencies"`
+	BytesIn       BytesSummary   `json:"bytes_in"`
+	BytesOut      BytesSummary   `json:"bytes_out"`
+	Errors        []string       `json:"errors,omitempty"`
 }
 
 // LatencySummary holds latency percentiles.

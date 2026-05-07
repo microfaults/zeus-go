@@ -13,12 +13,24 @@ Four limits of the v1 DSL drive this rewrite. They are baked into the schema, no
 
 ## Design principles
 
-- **Tree, not list.** A workflow is a node tree. Every node has a `type` discriminator. Leaf nodes are requests; composite nodes are `sequence`, `parallel`, or `delay`. The topological sort is gone.
+- **Tree, not list.** A workflow is a node tree. Every node has a `type` discriminator. Leaf nodes are requests; composite nodes are `sequence`, `parallel`, `delay`, `optional`, `repeat`, or `if`. The topological sort is gone.
 - **Required by default.** A step runs unless something explicitly says otherwise. The v1 `probability` field moves to an `optional` wrapper that the author opts into.
 - **Variants are first-class inside a request.** A request node may carry a list of `variants`, each with a weight and a sparse dot-path patch. The engine picks one variant per iteration.
 - **Delay is a node.** Inter-step timing is a `delay` node the author places wherever they want. The workflow's `default_delay` remains as the default that fires after each request, and authors can override it with per-request `before_delay` / `after_delay` or by inserting an explicit `delay` node between children.
 - **Extract scope follows the tree.** Extracts do not live in a flat global map. Siblings of a sequence see earlier siblings' extracts. Parallel branches run in independent scopes and merge on completion. An optional child is transparent to its parent.
+- **Bounded loops and extract-driven conditionals are first-class.** `repeat` handles N-iteration loops, cursor-paged reads, and `while`-style continuation; `if` handles "took this branch only because a prior extract said so." Both are scope-transparent and avoid forcing authors to rewrite a tree as a Markov chain when what they want is a bounded cycle or a data-dependent branch.
 - **Data is external.** No `open()` on static files. Workflows declare a `data_schema.pools` block. Zeus pulls the dataset from its dataset store and hands it to k6 at `setup()` time over HTTP.
+
+## Relationship to prior art
+
+DSL v2 is a JSON-native take on a well-explored pattern — it is not a novel runtime model. Tree-structured workload DSLs predate this work by more than a decade, and it is worth stating plainly where the design sits among them.
+
+- **Gatling's scenario DSL** (Scala/Java/JS/TS/Kotlin) is the most feature-rich comparable DSL. It offers `exec`, `group`, `repeat`, `during`, `asLongAs`, `doIf`, `randomSwitch`, `exitHereIfFailed`, and feeders for data injection. DSL v2 covers a strict subset of Gatling's surface: `sequence`, `parallel`, `delay`, `optional`, `request`, `repeat`, and `if` cover the bulk of what Gatling's control-flow combinators express. Features deliberately not adopted (e.g., `exitHereIfFailed`, hierarchical `group` timings, streaming feeders) were judged lower value per the 80-20 rule, and can be added as new node types without schema-breaking changes.
+- **JMeter's Logic Controllers** (Loop, If, While, ForEach, Transaction, Throughput, Random, Module, Interleave) are the deepest tree-structured load-test primitives in any tool. The JMeter plan is literally a tree; DSL v2 makes the same architectural choice with different ergonomics (JSON vs. XML, HTTP API vs. GUI) and a smaller node vocabulary.
+- **Locust's `SequentialTaskSet` and `MarkovTaskSets`** express sequential and probabilistic workflows in Python. MarkovTaskSets is an in-tool implementation of the same methodology as WESSBAS (below).
+- **WESSBAS / Markov4JMeter** (Springer, *Software and Systems Modeling*, 2016) extract probabilistic workload specifications from production session logs, model user behavior as Customer Behavior Model Graphs mapped to Markov chains, and emit JMeter plans. A Markov chain is a degenerate subset of a tree DSL — every Markov chain is expressible as a `repeat`-wrapped `if`/`optional` ladder — so DSL v2 is intended to be a *richer* projection target for the same class of extraction pipelines.
+
+DSL v2's contribution, if any, is not the runtime model. It is that the tree is JSON-serializable, machine-generable, and designed to be the projection target for manteion's production-traffic → workflow pipeline (cache-box body projection, OTel trace shape inference, Prometheus load sizing). The DSL itself is commodity; the integrated pipeline is where faults-lab adds value.
 
 ## JSON schema
 
@@ -56,7 +68,7 @@ Four limits of the v1 DSL drive this rewrite. They are baked into the schema, no
 
 ## Node type reference
 
-Every node anywhere in the tree has a `type` discriminator. The five types are `sequence`, `parallel`, `delay`, `optional`, and `request`.
+Every node anywhere in the tree has a `type` discriminator. The seven types are `sequence`, `parallel`, `delay`, `optional`, `request`, `repeat`, and `if`.
 
 ### `sequence`
 
@@ -168,6 +180,64 @@ Field notes:
 - **`before_delay` / `after_delay`** — each takes a `{min_ms, max_ms}` object, a `{persona_key}` object, or `null` to explicitly suppress the workflow's `default_delay` at that request. Not setting them inherits `default_delay` after the request.
 - **`timeout_ms`** — per-request request timeout. k6 does not enforce a global default; this is the request-level override.
 
+### `repeat`
+
+Runs a single child multiple times. Used for browsing several products in a row, paging through a cursor-based list, or retrying an action a fixed number of times.
+
+```json
+{
+  "type": "repeat",
+  "id": "page-through-feed",                           // optional; binds merged extracts
+  "count": 3,                                          // literal N (required if no while)
+  "count_template": "{{steps.session.page_count}}",    // resolved to int once before the loop
+  "while": "{{steps.page.has_more}}",                  // truthy-check before each iteration
+  "max": 10,                                           // safety cap when using `while`
+  "child": <node>                                      // REQUIRED; single child
+}
+```
+
+Iteration-count resolution checks fields in priority order `count` → `count_template` → `while`. Exactly one must be set. If `while` is used, `max` provides a hard upper bound (default 100) so a stuck condition cannot loop forever.
+
+Scope rule: all iterations share one **loop scope** chained to the parent. Iteration K+1 observes iteration K's extracts via `{{steps.<id>.*}}` — this is how cursor-paged reads work:
+
+```json
+{
+  "type": "repeat",
+  "while": "{{steps.page.next_cursor}}",
+  "max": 20,
+  "child": {
+    "type": "request",
+    "id": "page",
+    "method": "GET",
+    "path": "/items?cursor={{steps.page.next_cursor}}",
+    "extract": { "next_cursor": "jsonpath:$.next" }
+  }
+}
+```
+
+Iteration 1 runs with `{{steps.page.next_cursor}}` unresolved (empty string interpolation, so `?cursor=`); the server returns the first page, and `extract` sets `page.next_cursor`. Iteration 2 sees the cursor from iteration 1. The loop ends when the server returns an empty `next` and the while-check evaluates falsy.
+
+When the child succeeds in every iteration, `repeat` succeeds. A failed iteration short-circuits the loop. On completion, the loop scope merges into the parent under `id` if set, or flat-merges into the parent otherwise (latest-write wins per extract key — iteration N's value overwrites N-1's).
+
+### `if`
+
+Takes a branch based on a template-evaluated condition. Use for extract-driven conditionals like "only compose a post if the earlier auth step produced a token."
+
+```json
+{
+  "type": "if",
+  "condition": "{{steps.login.authed}}",               // REQUIRED; template string
+  "then": <node>,                                      // REQUIRED
+  "else": <node>                                       // optional
+}
+```
+
+Condition truthiness follows template-language conventions (not raw JS): `null`, `undefined`, `false`, `0`, `NaN`, empty string, empty array, and empty object are **falsy**. Everything else is truthy. Missing keys resolve to `undefined`, which is falsy — this lets an `if` check "did this extract exist?" without throwing on a missing key.
+
+`if` is scope-transparent, like `optional`: whichever branch runs writes extracts to the parent scope keyed by the branch's `id` (or the child node's `id` if the branch is a request). When the condition is falsy and no `else` is provided, the node is a no-op and returns success.
+
+`if` and `optional` overlap but are distinct. `optional` is a random probability gate keyed to a persona or a numeric literal — the outcome is stochastic per iteration. `if` is deterministic: same inputs, same branch. A workflow that models "30% of users explore" uses `optional`; a workflow that models "only users with a non-empty cart go to checkout" uses `if`.
+
 ## Variant semantics
 
 A `variants` list attached to a `request` node defines a weighted discrete distribution. The engine draws exactly one variant per request execution, normalizes the weights (they do not need to sum to 100), and applies the chosen variant's `set` map to the request node.
@@ -205,6 +275,8 @@ Extracts do not live in a flat global map. Each node in the tree has an associat
 - **Sequence scope** — child of the sequence's parent scope. Children write their extracts into the sequence scope in execution order. Later children read earlier children's extracts through the sequence scope. On successful completion the sequence scope merges into its parent under the sequence's `id`.
 - **Parallel scope** — each parallel child starts a fresh child scope at the moment it is launched. Children cannot see each other's extracts, because they have not all finished when any one of them needs to resolve a template. On completion, each child's extracts merge into the parallel's parent scope under the child's `id`, indexed under the parallel's `id` if the parallel has one.
 - **Optional scope** — transparent. The optional node itself has no scope; its child runs in the optional's parent scope, so the child's extracts are visible to later siblings of the `optional` node keyed by the child's `id`.
+- **Repeat loop scope** — one scope shared across all iterations, chained to the repeat's parent. Each iteration reads earlier iterations' extracts through this scope (same-key overwrites). On completion, the loop scope merges into the parent under the repeat's `id` (or flat-merges if no `id`).
+- **If** — transparent. Whichever branch runs writes its extracts to the parent scope under the branch's own `id`, same rules as `optional`.
 - **Delay** — no scope.
 
 ### Example 1: Linear sequence (equivalent to v1)
@@ -474,7 +546,7 @@ These are deliberate non-goals for the v2 spec so the schema can grow cleanly:
 
 - **Retry and circuit breakers.** A failing request fails. No per-step retry count, no exponential backoff, no circuit-open logic. Workloads that need retry semantics should target the service's own retry surface.
 - **Body-shape assertions.** `expect` only checks status codes. No regex match, no JSONPath match, no header assertion. The `expect` object form leaves room for this later.
-- **Conditional branching on response content.** The only conditional in v2 is `optional`'s probability gate. Conditional-on-status or conditional-on-body is future work.
+- **Conditional branching on status codes or expressions.** `if` evaluates template truthiness against extract values, which covers "did the prior step produce X?" but not "status code was in range Y" or "response body matched regex Z." The `expect` object form leaves room for richer predicates later; the branching DSL will follow once the predicate shape stabilizes.
 - **Streaming responses and SSE consumption.** All requests are simple request/response. Streaming endpoints are out of scope.
 - **gRPC.** Everything is HTTP. gRPC workflows can be added by extending the `request` node with a discriminator, but are not in this version.
 - **Nested variants.** A request has one `variants` list at one level. No nested variant trees.
