@@ -8,19 +8,8 @@ build:
       context: .
       docker:
         dockerfile: Dockerfile
-    - image: k6-loadgen
-      context: ./k6
-      docker:
-        dockerfile: Dockerfile.k6
 deploy:
-  kubectl:
-    hooks:
-      before:
-        - host:
-            command:
-              - sh
-              - -c
-              - kubectl delete job k6-browse k6-checkout --ignore-not-found
+  kubectl: {}
 manifests:
   kustomize:
     paths:
