@@ -406,25 +406,38 @@ POST /api/v1/attacks
 ```
 
 ```json
-// request — extends current AttackConfig with:
+// request — attacker.AttackConfig
 {
-  "target":          "http://productcatalog:3550/ListProducts",
+  "target": {
+    "url":     "http://productcatalog:3550/products",
+    "method":  "GET",
+    "headers": { "Accept": "application/json" }
+  },
   "rate":            100,
   "duration_s":      60,
-  "method":          "POST",
-  "body":            "{}",
-  "headers":         { "Content-Type": "application/json" },
-  "dedup_bypass":    "header",
+  "dedup_bypass":    { "strategy": "header", "source": "X-Idempotency-Key" },
   "experiment_id":   "<manteion-assigned>",
   "run_ref":         "<optional: tie this attack to a concurrent workflow run>",
-  "workflow_label":  "browse"
+  "workflow_label":  "browse",
+
+  "timeout_s":       30,
+  "max_connections": 10000,
+  "max_body_bytes":  -1,
+  "redirects":       10
 }
 
 // response 202
 { "id": "<attack_id>", "status": "running", "started_at": "..." }
 ```
 
-`workflow_label` is injected into the vegeta targeter's W3C Baggage alongside `meta-trace-id`.
+Field notes:
+
+- `target` matches `attacker.TargetSpec` — `url`, `method`, optional `headers`, optional `body` (base64 in JSON since `Body` is `[]byte`). REST routes on the Go reimplementation of productcatalog are `/products`, `/products/{id}`, `/products/batch`, `/products/search`.
+- `duration_s` is an integer number of seconds (matches the run-create convention).
+- `dedup_bypass` is an object: `strategy` is `"header"` or `"query"`; `source` is the header name or query-param name to randomize per request. Omit `source` to use the strategy default (`X-Idempotency-Key` / `nonce`).
+- `timeout_s`, `max_connections`, `max_body_bytes`, `redirects` are optional vegeta tuning knobs. Zero (or omitted) uses the vegeta default.
+- `workflow_label` is injected into the vegeta targeter's W3C Baggage alongside `meta-trace-id`. **Zeus does not cross-check this label against any atropos rule registry** — a label no rule matches silently produces a no-isolation run. Manteion owns that verification.
+- `experiment_id` is used as a Prometheus label on `zeus_attacks_started_total` and the series is never pruned. Manteion is expected to keep experiment-id cardinality bounded.
 
 #### List attacks
 

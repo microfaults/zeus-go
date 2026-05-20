@@ -64,14 +64,20 @@ func ExtractMetaTraceID(header http.Header) string {
 	return ""
 }
 
-// ValidateMetaTraceID ensures the ID is safe for W3C baggage transport.
+// ValidateBaggageValue ensures a value is safe for W3C baggage transport.
 // Baggage values must not contain comma, semicolon, equals, or whitespace.
+// Empty values are permitted; callers that disallow empty must check separately.
+func ValidateBaggageValue(val string) error {
+	if strings.ContainsAny(val, ",;= \t") {
+		return fmt.Errorf("trace: value contains baggage-unsafe characters: %q", val)
+	}
+	return nil
+}
+
+// ValidateMetaTraceID ensures the ID is non-empty and safe for W3C baggage.
 func ValidateMetaTraceID(id string) error {
 	if id == "" {
 		return fmt.Errorf("trace: meta-trace-id must not be empty")
 	}
-	if strings.ContainsAny(id, ",;= \t") {
-		return fmt.Errorf("trace: meta-trace-id contains baggage-unsafe characters: %q", id)
-	}
-	return nil
+	return ValidateBaggageValue(id)
 }

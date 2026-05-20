@@ -23,7 +23,6 @@ import (
 	"atropos-go/loadgen/internal/api"
 	"atropos-go/loadgen/internal/attacker"
 	"atropos-go/loadgen/internal/dataset"
-	"atropos-go/loadgen/internal/dedup"
 	"atropos-go/loadgen/internal/run"
 	"atropos-go/loadgen/internal/sse"
 	"atropos-go/loadgen/internal/stats"
@@ -46,10 +45,6 @@ func main() {
 	metrics := stats.NewMetrics()
 	snapshots := stats.NewSnapshotStore()
 	broker := sse.NewBroker()
-
-	// Register default dedup bypass strategies.
-	manager.RegisterBypass("header", &dedup.HeaderMutator{HeaderName: "X-Idempotency-Key"})
-	manager.RegisterBypass("query", &dedup.QueryParamMutator{ParamName: "nonce"})
 
 	// HTTP API server.
 	server := api.NewServer(api.Deps{
