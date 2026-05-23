@@ -34,25 +34,41 @@ func (s *Server) handleCreateAttack(w http.ResponseWriter, r *http.Request) {
 		cfg.ID = id.New()
 	}
 
-	// If linked to a run via run_ref, inherit workflow_label and meta_trace_id.
+	// If run_ref is supplied, the run must exist — silent miss would defeat
+	// atropos's workflow-scoped rule matching (an empty workflow_label flies
+	// through cache-box). When run_ref is omitted we accept standalone attacks
+	// for now; once the experiment-id flow is enforced end-to-end, this branch
+	// should require either run_ref or an explicit standalone-attack opt-in.
+	// TODO(experiment-flow): tighten when experiment_id is required.
 	if cfg.RunRef != "" {
 		rn, ok := s.deps.Runs.Get(cfg.RunRef)
-		if ok {
-			if cfg.MetaTraceID == "" {
-				cfg.MetaTraceID = rn.MetaTraceID
-			}
-			if cfg.WorkflowLabel == "" {
-				cfg.WorkflowLabel = rn.WorkflowLabel
-			}
+		if !ok {
+			writeError(w, http.StatusBadRequest, "run_ref not found: "+cfg.RunRef)
+			return
+		}
+		if cfg.MetaTraceID == "" {
+			cfg.MetaTraceID = rn.MetaTraceID
+		}
+		if cfg.WorkflowLabel == "" {
+			cfg.WorkflowLabel = rn.WorkflowLabel
 		}
 	}
 
-	attack, err := s.deps.Attacks.Launch(r.Context(), cfg)
+	// onComplete is the single source of truth for the ActiveAttacks gauge:
+	// it fires exactly once whether the attack ends naturally, via Stop(), or
+	// via the context timeout. handleStopAttack must NOT decrement here.
+	onComplete := func(*attacker.Attack) {
+		s.deps.Metrics.ActiveAttacks.WithLabelValues().Dec()
+	}
+
+	attack, err := s.deps.Attacks.Launch(r.Context(), cfg, onComplete)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
+	// Cardinality note: ExperimentID is a label here and the counter is never
+	// pruned — manteion is expected to keep experiment ids bounded.
 	s.deps.Metrics.AttacksStartedTotal.WithLabelValues(cfg.ExperimentID).Inc()
 	s.deps.Metrics.ActiveAttacks.WithLabelValues().Inc()
 
@@ -142,7 +158,8 @@ func (s *Server) handleStopAttack(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
-	s.deps.Metrics.ActiveAttacks.WithLabelValues().Dec()
+	// ActiveAttacks is decremented in the launch goroutine's onComplete hook,
+	// not here — Stop() halts vegeta and the goroutine finalizes the gauge.
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -176,9 +193,16 @@ func (s *Server) handleAttackStats(w http.ResponseWriter, r *http.Request) {
 	if attack.Result != nil {
 		resp["result"] = attack.Result
 	}
-	if attack.Config.DedupBypass != "" {
+	// TODO(metrics): the dedup envelope below only echoes the strategy that
+	// was requested. When per-attack dedup-effectiveness metrics land
+	// (unique-key count, collision rate, distribution of mutated values),
+	// surface them here so callers can verify the bypass actually defeated
+	// the SUT's dedup. The emission point is the targeter in
+	// internal/attacker/attacker.go.
+	if attack.Config.DedupBypass != nil {
 		resp["dedup"] = map[string]any{
-			"strategy": attack.Config.DedupBypass,
+			"strategy": attack.Config.DedupBypass.Strategy,
+			"source":   attack.Config.DedupBypass.Source,
 		}
 	}
 	writeJSON(w, http.StatusOK, resp)

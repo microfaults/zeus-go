@@ -91,21 +91,30 @@ components:
     attacker.AttackConfig:
       properties:
         dedup_bypass:
-          type: string
-        duration:
-          $ref: '#/components/schemas/time.Duration'
+          $ref: '#/components/schemas/attacker.DedupBypassSpec'
+        duration_s:
+          type: integer
         experiment_id:
           type: string
         id:
           type: string
+        max_body_bytes:
+          type: integer
+        max_connections:
+          type: integer
         meta_trace_id:
           type: string
         rate:
+          type: integer
+        redirects:
           type: integer
         run_ref:
           type: string
         target:
           $ref: '#/components/schemas/attacker.TargetSpec'
+        timeout_s:
+          description: Optional vegeta tuning. Omit (zero) to use vegeta defaults.
+          type: integer
         workflow_label:
           type: string
       type: object
@@ -141,6 +150,13 @@ components:
           type: number
         total:
           type: integer
+      type: object
+    attacker.DedupBypassSpec:
+      properties:
+        source:
+          type: string
+        strategy:
+          type: string
       type: object
     attacker.LatencySummary:
       properties:

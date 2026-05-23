@@ -37,7 +37,6 @@ openapi:
 		--parseDependency \
 		--parseInternal
 	@python3 scripts/strip-empty-externaldocs.py docs/swagger.yaml docs/swagger.json
-	@python3 scripts/strip-empty-externaldocs.py docs/swagger.yaml docs/swagger.json
 
 openapi-check: openapi
 	@git diff --exit-code -- docs/swagger.yaml docs/swagger.json || \

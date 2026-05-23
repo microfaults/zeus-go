@@ -1,5 +1,4 @@
 services:
-  # The main Go service: vegeta-based precision load testing + policy engine.
   zeus:
     build:
       context: .
@@ -8,38 +7,9 @@ services:
       - "8080:8080"
     environment:
       - ZEUS_ADDR=:8080
-
-  # k6 sidecar: browsing workflow (cautious persona).
-  # Uses the generic config-driven runner with DSL v2 flows.
-  k6-browse:
-    build:
-      context: ./k6
-      dockerfile: Dockerfile.k6
-    command: ["run", "/scripts/runner.js"]
-    environment:
-      - ZEUS_URL=http://zeus:8080
-      - BASE_URL=${BASE_URL:-http://frontend:8080}
-      - FLOW=online-boutique/browse
-      - PERSONA=cautious
-      - VUS=${BROWSE_VUS:-10}
-      - DURATION=${BROWSE_DURATION:-5m}
-    depends_on:
-      - zeus
-    restart: "no"
-
-  # k6 sidecar: checkout workflow (aggressive persona).
-  k6-checkout:
-    build:
-      context: ./k6
-      dockerfile: Dockerfile.k6
-    command: ["run", "/scripts/runner.js"]
-    environment:
-      - ZEUS_URL=http://zeus:8080
-      - BASE_URL=${BASE_URL:-http://frontend:8080}
-      - FLOW=online-boutique/checkout
-      - PERSONA=aggressive
-      - VUS=${CHECKOUT_VUS:-5}
-      - DURATION=${CHECKOUT_DURATION:-5m}
-    depends_on:
-      - zeus
-    restart: "no"
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"

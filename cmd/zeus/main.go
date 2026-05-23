@@ -13,7 +13,7 @@ package main
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -23,7 +23,6 @@ import (
 	"atropos-go/loadgen/internal/api"
 	"atropos-go/loadgen/internal/attacker"
 	"atropos-go/loadgen/internal/dataset"
-	"atropos-go/loadgen/internal/dedup"
 	"atropos-go/loadgen/internal/run"
 	"atropos-go/loadgen/internal/sse"
 	"atropos-go/loadgen/internal/stats"
@@ -31,6 +30,11 @@ import (
 )
 
 func main() {
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	}))
+	slog.SetDefault(logger)
+
 	addr := envOr("ZEUS_ADDR", ":8080")
 
 	// Wire dependencies.
@@ -41,10 +45,6 @@ func main() {
 	metrics := stats.NewMetrics()
 	snapshots := stats.NewSnapshotStore()
 	broker := sse.NewBroker()
-
-	// Register default dedup bypass strategies.
-	manager.RegisterBypass("header", &dedup.HeaderMutator{HeaderName: "X-Idempotency-Key"})
-	manager.RegisterBypass("query", &dedup.QueryParamMutator{ParamName: "nonce"})
 
 	// HTTP API server.
 	server := api.NewServer(api.Deps{
@@ -58,8 +58,11 @@ func main() {
 	})
 
 	httpServer := &http.Server{
-		Addr:    addr,
-		Handler: server.Handler(),
+		Addr:         addr,
+		Handler:      server.Handler(),
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  60 * time.Second,
 	}
 
 	// Graceful shutdown on SIGINT / SIGTERM.
@@ -68,24 +71,25 @@ func main() {
 
 	// Start HTTP server.
 	go func() {
-		log.Printf("zeus: listening on %s", addr)
+		logger.Info("zeus starting", "addr", addr)
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("zeus: server error: %v", err)
+			logger.Error("server error", "error", err)
+			os.Exit(1)
 		}
 	}()
 
 	// Wait for shutdown signal.
 	<-ctx.Done()
-	log.Println("zeus: shutting down...")
+	logger.Info("shutdown signal received")
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
-		log.Printf("zeus: http shutdown error: %v", err)
+		logger.Error("shutdown error", "error", err)
 	}
 
 	manager.StopAll()
-	log.Println("zeus: stopped")
+	logger.Info("zeus stopped")
 }
 
 func envOr(key, fallback string) string {
