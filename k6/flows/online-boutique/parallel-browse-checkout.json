@@ -13,7 +13,7 @@
     "shippingservice",
     "emailservice"
   ],
-  "base_url": "http://frontend:8080",
+  "base_url": "http://frontend",
   "estimated_rps_per_vu": 2,
   "default_delay": { "min_ms": 200, "max_ms": 800 },
   "thresholds": {
