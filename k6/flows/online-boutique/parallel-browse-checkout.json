@@ -1,0 +1,125 @@
+{
+  "$schema": "https://faults-lab.dev/zeus/workflow.schema.json",
+  "version": "2",
+  "name": "online-boutique-parallel-browse-checkout",
+  "description": "Hit homepage, view 3 products in parallel, randomly add one to cart, then check out with sample details.",
+  "targets": [
+    "frontend",
+    "productcatalogservice",
+    "currencyservice",
+    "cartservice",
+    "checkoutservice",
+    "paymentservice",
+    "shippingservice",
+    "emailservice"
+  ],
+  "base_url": "http://frontend:8080",
+  "estimated_rps_per_vu": 2,
+  "default_delay": { "min_ms": 200, "max_ms": 800 },
+  "thresholds": {
+    "http_req_failed":   ["rate<0.1"],
+    "http_req_duration": ["p(95)<3000"]
+  },
+  "data_schema": {
+    "pools": {
+      "products": { "fields": ["id", "name"], "min_size": 3 },
+      "users": {
+        "fields": [
+          "email", "street_address", "zip_code", "city", "state",
+          "country", "credit_card_number", "credit_card_expiration_month",
+          "credit_card_expiration_year", "credit_card_cvv"
+        ],
+        "min_size": 1
+      }
+    }
+  },
+  "root": {
+    "type": "sequence",
+    "id": "session",
+    "children": [
+      {
+        "type": "request",
+        "id": "homepage",
+        "method": "GET",
+        "path": "/",
+        "expect": { "status": [200] }
+      },
+      {
+        "type": "parallel",
+        "id": "browse-fanout",
+        "wait": "all",
+        "children": [
+          {
+            "type": "request",
+            "id": "view_a",
+            "method": "GET",
+            "path": "/product/{{data.products.id}}",
+            "expect": { "status": [200] },
+            "extract": { "product_id": "{{data.products.id}}" }
+          },
+          {
+            "type": "request",
+            "id": "view_b",
+            "method": "GET",
+            "path": "/product/{{data.products.id}}",
+            "expect": { "status": [200] },
+            "extract": { "product_id": "{{data.products.id}}" }
+          },
+          {
+            "type": "request",
+            "id": "view_c",
+            "method": "GET",
+            "path": "/product/{{data.products.id}}",
+            "expect": { "status": [200] },
+            "extract": { "product_id": "{{data.products.id}}" }
+          }
+        ]
+      },
+      {
+        "type": "request",
+        "id": "add_to_cart",
+        "method": "POST",
+        "path": "/cart",
+        "headers": { "Content-Type": "application/x-www-form-urlencoded" },
+        "body": {
+          "product_id": "{{steps.browse-fanout.view_a.product_id}}",
+          "quantity": "{{random_int(1,2)}}"
+        },
+        "variants": [
+          { "weight": 1, "set": { "body.product_id": "{{steps.browse-fanout.view_a.product_id}}" } },
+          { "weight": 1, "set": { "body.product_id": "{{steps.browse-fanout.view_b.product_id}}" } },
+          { "weight": 1, "set": { "body.product_id": "{{steps.browse-fanout.view_c.product_id}}" } }
+        ],
+        "expect": { "status": [200, 302] }
+      },
+      {
+        "type": "request",
+        "id": "view_cart",
+        "method": "GET",
+        "path": "/cart",
+        "expect": { "status": [200] }
+      },
+      {
+        "type": "request",
+        "id": "checkout",
+        "method": "POST",
+        "path": "/cart/checkout",
+        "headers": { "Content-Type": "application/x-www-form-urlencoded" },
+        "body": {
+          "email":                          "{{data.users.email}}",
+          "street_address":                 "{{data.users.street_address}}",
+          "zip_code":                       "{{data.users.zip_code}}",
+          "city":                           "{{data.users.city}}",
+          "state":                          "{{data.users.state}}",
+          "country":                        "{{data.users.country}}",
+          "credit_card_number":             "{{data.users.credit_card_number}}",
+          "credit_card_expiration_month":   "{{data.users.credit_card_expiration_month}}",
+          "credit_card_expiration_year":    "{{data.users.credit_card_expiration_year}}",
+          "credit_card_cvv":                "{{data.users.credit_card_cvv}}"
+        },
+        "expect": { "status": [200, 302] },
+        "after_delay": { "min_ms": 1000, "max_ms": 2000 }
+      }
+    ]
+  }
+}
