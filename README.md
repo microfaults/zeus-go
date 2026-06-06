@@ -1,5 +1,11 @@
 # zeus-go
 
+<p align="center">
+  <img src="docs/assets/zeus.png" alt="Zeus — the load generator that hurls workflows and precision attacks" width="220">
+</p>
+
+<p align="center"><em>The execution plane of faults-lab: hurls workflow traffic and precision attacks on command.</em></p>
+
 Precision load-generation and attack orchestration platform. Combines **k6 sidecars** for workflow-driven traffic with **Zeus**, a Go service that launches targeted [Vegeta](https://github.com/tsenart/vegeta) attacks against endpoints outside the normal workflow path.
 
 ## Architecture
@@ -194,3 +200,27 @@ go fmt ./... && go vet ./...
 - Go 1.25+
 - Docker & Docker Compose (for containerized runs)
 - k6 (if running scripts outside Docker)
+
+## Status & roadmap
+
+zeus-go is the **execution plane** of faults-lab: it faithfully replays a fixed workflow shape on
+command and reports stats. It does not decide phase order or rule state — that logic lives in
+`manteion-go`, which drives zeus through its `/api/v1/zeus/*` proxy.
+
+**Shipped today**
+
+- DSL v2 tree-walking workflow engine (`sequence`, `parallel`, `delay`, `optional`, `request`,
+  `repeat`, `if`) with scoped extracts, variants, and persona-driven think times.
+- Run lifecycle with live SSE tailing and a Prometheus stats registry.
+- Dataset store (NDJSON ingest, TTL cache) and a synthetic dataset generator.
+- Vegeta attack orchestration and a tick-based policy engine (10 s interval, cooldowns).
+- Dedup-bypass strategies and W3C Baggage trace correlation.
+
+**In flight / not yet wired**
+
+- **Legacy k6 cleanup** — the pre-declarative hardcoded scripts (`k6/scripts/boutique-*.js`,
+  `k6/scripts/lib/personas.js`) are dead, and the `online-boutique` flows still need migration to
+  DSL v2. Handoff spec: [`docs/cleanup-legacy-k6.md`](docs/cleanup-legacy-k6.md).
+- **Experiment-driven attacks** — attacks are launched directly on zeus today; sequencing them
+  alongside cache-box phases is an orchestrator concern owned by `manteion-go` (attacks are
+  deliberately *not* part of the zeus proxy) and is still being wired.
