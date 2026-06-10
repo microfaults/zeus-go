@@ -9,6 +9,53 @@ import (
 	"atropos-go/loadgen/internal/workflow"
 )
 
+// --- POST /api/v1/workflows/validate ---
+
+// validateWorkflowDocRequest is the stateless-validation envelope: the same
+// `workflow` field as createWorkflowRequest, without overwrite (nothing is
+// registered).
+type validateWorkflowDocRequest struct {
+	Workflow *workflow.Workflow `json:"workflow"`
+}
+
+// handleValidateWorkflowDoc runs a DSL v2 document through the same
+// validators as workflow registration WITHOUT touching the store — no id
+// assignment, no registration. This is the validation authority manteion
+// calls at workflow create/update time: manteion owns the durable
+// definition, zeus owns DSL semantics.
+//
+// @Summary      Validate workflow document (stateless)
+// @Description  Validates a DSL v2 document (structure, version, targets,
+// @Description  node/variant caps) without registering it. 200 {ok,name} on
+// @Description  success; 400 with the validator message otherwise.
+// @Tags         workflows
+// @Accept       json
+// @Produce      json
+// @Param        body  body      api.validateWorkflowDocRequest  true  "workflow envelope"
+// @Success      200   {object}  map[string]any     "{ok: true, name: ...}"
+// @Failure      400   {object}  api.ErrorResponse  "invalid JSON or workflow validation error"
+// @Router       /workflows/validate [post]
+func (s *Server) handleValidateWorkflowDoc(w http.ResponseWriter, r *http.Request) {
+	var req validateWorkflowDocRequest
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json: "+err.Error())
+		return
+	}
+	if req.Workflow == nil {
+		writeError(w, http.StatusBadRequest, "workflow field is required")
+		return
+	}
+	if err := workflow.ValidateWorkflow(req.Workflow); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := workflow.ValidateSchema(req.Workflow); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "name": req.Workflow.Name})
+}
+
 // --- POST /api/v1/workflows ---
 
 type createWorkflowRequest struct {

@@ -53,6 +53,7 @@ func (s *Server) Handler() http.Handler {
 func (s *Server) routes() {
 	// Workflows
 	s.mux.HandleFunc("POST /api/v1/workflows", s.handleCreateWorkflow)
+	s.mux.HandleFunc("POST /api/v1/workflows/validate", s.handleValidateWorkflowDoc)
 	s.mux.HandleFunc("GET /api/v1/workflows", s.handleListWorkflows)
 	s.mux.HandleFunc("GET /api/v1/workflows/{id}", s.handleGetWorkflow)
 	s.mux.HandleFunc("DELETE /api/v1/workflows/{id}", s.handleDeleteWorkflow)
