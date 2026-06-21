@@ -83,6 +83,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/attacks", s.handleListAttacks)
 	s.mux.HandleFunc("GET /api/v1/attacks/{id}", s.handleGetAttack)
 	s.mux.HandleFunc("DELETE /api/v1/attacks/{id}", s.handleStopAttack)
+	s.mux.HandleFunc("GET /api/v1/attacks/{id}/result", s.handleAttackResult)
 	s.mux.HandleFunc("GET /api/v1/attacks/{id}/stats", s.handleAttackStats)
 
 	// Prometheus metrics

@@ -397,7 +397,7 @@ GET /api/v1/metrics/summary
 
 ### 4. Precision attack control
 
-These endpoints stay from the current API, extended with `experiment_id` and `run_ref`.
+These endpoints stay from the current API, extended with `experiment_id`, `meta_trace_id`, and `workflow_label`.
 
 #### Launch an attack
 
@@ -417,7 +417,7 @@ POST /api/v1/attacks
   "duration_s":      60,
   "dedup_bypass":    { "strategy": "header", "source": "X-Idempotency-Key" },
   "experiment_id":   "<manteion-assigned>",
-  "run_ref":         "<optional: tie this attack to a concurrent workflow run>",
+  "meta_trace_id":   "<manteion-assigned: phase/trace id, echoed as W3C baggage>",
   "workflow_label":  "browse",
 
   "timeout_s":       30,
@@ -426,7 +426,7 @@ POST /api/v1/attacks
   "redirects":       10
 }
 
-// response 202
+// response 201 (manteion's StartAttack accepts only 200/201)
 { "id": "<attack_id>", "status": "running", "started_at": "..." }
 ```
 
@@ -442,13 +442,38 @@ Field notes:
 #### List attacks
 
 ```
-GET /api/v1/attacks?status=running&experiment_id=X&run_ref=Y
+GET /api/v1/attacks?status=running&experiment_id=X
 ```
 
 #### Get attack status
 
 ```
 GET /api/v1/attacks/{id}
+```
+
+```json
+// response 200 — id is top-level (mirrors manteion's zeus.AttackInfo)
+{ "id": "<attack_id>", "workload_id": "", "service": "",
+  "status": "running|completed|stopped", "started_at": "...", "completed_at": "..." }
+```
+
+#### Get attack result
+
+```
+GET /api/v1/attacks/{id}/result
+```
+
+Final vegeta metrics, normalized to manteion's `AttackResultInfo` (duration in ms, latency
+percentiles in microseconds). Returns **404 while the attack is still running** (no result
+yet) so callers can poll; the body materializes once the attack finalizes. `service` is empty
+— a single-URL attack targets a raw URL, not a named service.
+
+```json
+// response 200
+{ "attack_id": "<attack_id>", "service": "", "total_requests": 6000, "duration_ms": 60000,
+  "rate_actual": 100.0, "success_rate": 0.998,
+  "latency_p50_us": 1200, "latency_p90_us": 2400, "latency_p95_us": 3100, "latency_p99_us": 8200,
+  "throughput_rps": 99.8 }
 ```
 
 #### Stop an attack
@@ -476,8 +501,8 @@ GET /api/v1/status  — operator-friendly overview: runs, attacks, datasets, err
 | `POST /api/v1/workloads` | **Removed, absorbed.** | k6 self-registration is replaced by `POST /runs`. Zeus owns runs, not k6. |
 | `GET /api/v1/workloads` | **Removed, absorbed.** | Replaced by `GET /runs`. |
 | `DELETE /api/v1/workloads/{id}` | **Removed, absorbed.** | Replaced by `DELETE /runs/{run_id}`. |
-| `POST /api/v1/attacks` | **Stays, extended.** | Adds `experiment_id`, `run_ref`, `workflow_label`. |
-| `GET /api/v1/attacks/{id}` | **Stays, extended.** | Adds `/stats` sub-resource. |
+| `POST /api/v1/attacks` | **Stays, extended.** | Adds `experiment_id`, `meta_trace_id`, `workflow_label`; returns 201. |
+| `GET /api/v1/attacks/{id}` | **Stays, extended.** | Adds `/result` and `/stats` sub-resources. |
 | `DELETE /api/v1/attacks/{id}` | **Stays.** | Unchanged. |
 | `POST /api/v1/policies` | **Moved to manteion.** | Policy rules evaluate metrics against thresholds — that is manteion's concern. Deletes `internal/policy/` from zeus (~200 lines). |
 | `GET /api/v1/policies` | **Moved to manteion.** | Same. |
@@ -584,7 +609,7 @@ Zeus populates `atropos.workflow` at the **request site** in both the k6 engine 
 
 **Flow for Zeus attack traffic:**
 
-1. `POST /attacks` accepts a `workflow_label` field. If absent and `run_ref` is set, defaults to the linked run's `workflow_label`.
+1. `POST /attacks` accepts a `workflow_label` field, injected into every request's W3C Baggage as `atropos.workflow` (the key the atropos SDK matches cache-box rules against).
 2. `AttackConfig` gains a `WorkflowLabel string` field.
 3. `internal/attacker/attacker.go` uses `trace.InjectLabeledBaggage(header, map)` instead of today's `trace.InjectBaggageHeader(header, traceID)`.
 

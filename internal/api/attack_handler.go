@@ -1,11 +1,43 @@
 package api
 
 import (
+	"context"
 	"net/http"
+	"time"
 
 	"atropos-go/loadgen/internal/attacker"
 	"atropos-go/loadgen/internal/id"
 )
+
+// attackInfo is the GET /attacks/{id} response — field-for-field the shape
+// manteion's zeus.AttackInfo decodes. A single-URL vegeta attack has no zeus
+// workload or named service, so those fields are empty.
+type attackInfo struct {
+	ID          string     `json:"id"`
+	WorkloadID  string     `json:"workload_id"`
+	Service     string     `json:"service"`
+	Status      string     `json:"status"`
+	StartedAt   *time.Time `json:"started_at,omitempty"`
+	CompletedAt *time.Time `json:"completed_at,omitempty"`
+}
+
+// attackResultInfo is the GET /attacks/{id}/result response — field-for-field
+// the shape manteion's zeus.AttackResultInfo decodes: vegeta totals converted
+// to ms / microseconds. Service is empty (a single-URL attack targets a raw
+// URL, not a named service); manteion tolerates an empty service.
+type attackResultInfo struct {
+	AttackID      string  `json:"attack_id"`
+	Service       string  `json:"service"`
+	TotalRequests int64   `json:"total_requests"`
+	DurationMs    int64   `json:"duration_ms"`
+	RateActual    float64 `json:"rate_actual"`
+	SuccessRate   float64 `json:"success_rate"`
+	LatencyP50Us  int64   `json:"latency_p50_us"`
+	LatencyP90Us  int64   `json:"latency_p90_us"`
+	LatencyP95Us  int64   `json:"latency_p95_us"`
+	LatencyP99Us  int64   `json:"latency_p99_us"`
+	ThroughputRPS float64 `json:"throughput_rps"`
+}
 
 // --- POST /api/v1/attacks ---
 
@@ -13,15 +45,14 @@ import (
 //
 // @Summary      Launch attack
 // @Description  Persist and launch a precision attack. The body is an attacker.AttackConfig.
-// @Description  When run_ref references an existing run, meta_trace_id and workflow_label are
-// @Description  inherited from the linked run if not set on the request. The response is an
-// @Description  inline envelope with id, status, and started_at; the launched Attack object is
-// @Description  retrievable via GET /attacks/{id}.
+// @Description  The response is an inline envelope with id, status, and started_at; the launched
+// @Description  Attack is retrievable via GET /attacks/{id}, and its final metrics via
+// @Description  GET /attacks/{id}/result once it completes.
 // @Tags         attacks
 // @Accept       json
 // @Produce      json
 // @Param        attack  body      attacker.AttackConfig  true  "attack configuration"
-// @Success      202     {object}  map[string]any         "attack accepted; envelope contains id, status, started_at"
+// @Success      201     {object}  map[string]any         "attack created; envelope contains id, status, started_at"
 // @Failure      400     {object}  api.ErrorResponse      "invalid JSON or attack validation error"
 // @Router       /attacks [post]
 func (s *Server) handleCreateAttack(w http.ResponseWriter, r *http.Request) {
@@ -34,26 +65,6 @@ func (s *Server) handleCreateAttack(w http.ResponseWriter, r *http.Request) {
 		cfg.ID = id.New()
 	}
 
-	// If run_ref is supplied, the run must exist — silent miss would defeat
-	// atropos's workflow-scoped rule matching (an empty workflow_label flies
-	// through cache-box). When run_ref is omitted we accept standalone attacks
-	// for now; once the experiment-id flow is enforced end-to-end, this branch
-	// should require either run_ref or an explicit standalone-attack opt-in.
-	// TODO(experiment-flow): tighten when experiment_id is required.
-	if cfg.RunRef != "" {
-		rn, ok := s.deps.Runs.Get(cfg.RunRef)
-		if !ok {
-			writeError(w, http.StatusBadRequest, "run_ref not found: "+cfg.RunRef)
-			return
-		}
-		if cfg.MetaTraceID == "" {
-			cfg.MetaTraceID = rn.MetaTraceID
-		}
-		if cfg.WorkflowLabel == "" {
-			cfg.WorkflowLabel = rn.WorkflowLabel
-		}
-	}
-
 	// onComplete is the single source of truth for the ActiveAttacks gauge:
 	// it fires exactly once whether the attack ends naturally, via Stop(), or
 	// via the context timeout. handleStopAttack must NOT decrement here.
@@ -61,7 +72,11 @@ func (s *Server) handleCreateAttack(w http.ResponseWriter, r *http.Request) {
 		s.deps.Metrics.ActiveAttacks.WithLabelValues().Dec()
 	}
 
-	attack, err := s.deps.Attacks.Launch(r.Context(), cfg, onComplete)
+	// Detach from the request context: the attack outlives the HTTP response,
+	// so binding it to r.Context() would cancel vegeta the instant this handler
+	// returns and finalize every attack as "stopped". WithoutCancel keeps
+	// request-scoped values (trace) but drops the cancellation signal.
+	attack, err := s.deps.Attacks.Launch(context.WithoutCancel(r.Context()), cfg, onComplete)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -72,7 +87,8 @@ func (s *Server) handleCreateAttack(w http.ResponseWriter, r *http.Request) {
 	s.deps.Metrics.AttacksStartedTotal.WithLabelValues(cfg.ExperimentID).Inc()
 	s.deps.Metrics.ActiveAttacks.WithLabelValues().Inc()
 
-	writeJSON(w, http.StatusAccepted, map[string]any{
+	// 201 Created (not 202 Accepted): manteion's StartAttack accepts only 200/201.
+	writeJSON(w, http.StatusCreated, map[string]any{
 		"id":         attack.Config.ID,
 		"status":     attack.Status,
 		"started_at": attack.StartedAt,
@@ -84,33 +100,28 @@ func (s *Server) handleCreateAttack(w http.ResponseWriter, r *http.Request) {
 // handleListAttacks lists current and historical attacks, optionally filtered.
 //
 // @Summary      List attacks
-// @Description  Returns a bare array of attacks. Optional query filters narrow by status,
-// @Description  experiment_id, and run_ref.
+// @Description  Returns a bare array of attacks. Optional query filters narrow by status
+// @Description  and experiment_id.
 // @Tags         attacks
 // @Produce      json
 // @Param        status         query     string  false  "filter by attack status (e.g. running, completed)"
 // @Param        experiment_id  query     string  false  "filter by experiment id"
-// @Param        run_ref        query     string  false  "filter by linked run id"
 // @Success      200  {array}   attacker.Attack
 // @Router       /attacks [get]
 func (s *Server) handleListAttacks(w http.ResponseWriter, r *http.Request) {
-	list := s.deps.Attacks.List()
+	list := s.deps.Attacks.ViewAll()
 
 	// Filter by query params.
 	q := r.URL.Query()
 	status := q.Get("status")
 	experimentID := q.Get("experiment_id")
-	runRef := q.Get("run_ref")
 
-	var filtered []*attacker.Attack
+	var filtered []attacker.Attack
 	for _, a := range list {
 		if status != "" && a.Status != status {
 			continue
 		}
 		if experimentID != "" && a.Config.ExperimentID != experimentID {
-			continue
-		}
-		if runRef != "" && a.Config.RunRef != runRef {
 			continue
 		}
 		filtered = append(filtered, a)
@@ -127,17 +138,73 @@ func (s *Server) handleListAttacks(w http.ResponseWriter, r *http.Request) {
 // @Tags         attacks
 // @Produce      json
 // @Param        id   path      string  true  "Attack ID"
-// @Success      200  {object}  attacker.Attack
+// @Success      200  {object}  api.attackInfo
 // @Failure      404  {object}  api.ErrorResponse  "attack not found"
 // @Router       /attacks/{id} [get]
 func (s *Server) handleGetAttack(w http.ResponseWriter, r *http.Request) {
 	attackID := r.PathValue("id")
-	attack, ok := s.deps.Attacks.Get(attackID)
+	attack, ok := s.deps.Attacks.View(attackID)
 	if !ok {
 		writeError(w, http.StatusNotFound, "attack not found: "+attackID)
 		return
 	}
-	writeJSON(w, http.StatusOK, attack)
+	started := attack.StartedAt
+	writeJSON(w, http.StatusOK, attackInfo{
+		ID:          attack.Config.ID,
+		Status:      attack.Status,
+		StartedAt:   &started,
+		CompletedAt: attack.CompletedAt,
+	})
+}
+
+// --- GET /api/v1/attacks/{id}/result ---
+
+// handleAttackResult returns the final metrics for a completed attack.
+//
+// @Summary      Get attack result
+// @Description  Final vegeta metrics for a completed attack, normalized to manteion's
+// @Description  AttackResultInfo (duration in ms, latency percentiles in microseconds).
+// @Description  Returns 404 while the attack is still running (no result yet) so callers can
+// @Description  poll; the body becomes available once the attack finalizes.
+// @Tags         attacks
+// @Produce      json
+// @Param        id   path      string  true  "Attack ID"
+// @Success      200  {object}  api.attackResultInfo
+// @Failure      404  {object}  api.ErrorResponse  "attack not found, or result not ready yet"
+// @Router       /attacks/{id}/result [get]
+func (s *Server) handleAttackResult(w http.ResponseWriter, r *http.Request) {
+	attackID := r.PathValue("id")
+	attack, ok := s.deps.Attacks.View(attackID)
+	if !ok {
+		writeError(w, http.StatusNotFound, "attack not found: "+attackID)
+		return
+	}
+	// 404 == "not ready yet" in manteion's contract: GetAttackResult polls until
+	// the result materializes. An attack with no Result has not finalized.
+	if attack.Result == nil {
+		writeError(w, http.StatusNotFound, "attack result not ready: "+attackID)
+		return
+	}
+	writeJSON(w, http.StatusOK, toAttackResultInfo(attackID, attack.Result))
+}
+
+// toAttackResultInfo maps zeus's vegeta-derived AttackResult to the wire shape
+// manteion decodes. Service is empty: a single-URL attack has no named service.
+// ThroughputRPS uses vegeta's achieved request rate (manteion falls back to
+// requests/duration when zero, so either is acceptable).
+func toAttackResultInfo(attackID string, res *attacker.AttackResult) attackResultInfo {
+	return attackResultInfo{
+		AttackID:      attackID,
+		TotalRequests: int64(res.TotalRequests),
+		DurationMs:    res.Duration.Milliseconds(),
+		RateActual:    res.RateActual,
+		SuccessRate:   res.Success,
+		LatencyP50Us:  res.Latencies.P50.Microseconds(),
+		LatencyP90Us:  res.Latencies.P90.Microseconds(),
+		LatencyP95Us:  res.Latencies.P95.Microseconds(),
+		LatencyP99Us:  res.Latencies.P99.Microseconds(),
+		ThroughputRPS: res.RateActual,
+	}
 }
 
 // --- DELETE /api/v1/attacks/{id} ---
@@ -179,7 +246,7 @@ func (s *Server) handleStopAttack(w http.ResponseWriter, r *http.Request) {
 // @Router       /attacks/{id}/stats [get]
 func (s *Server) handleAttackStats(w http.ResponseWriter, r *http.Request) {
 	attackID := r.PathValue("id")
-	attack, ok := s.deps.Attacks.Get(attackID)
+	attack, ok := s.deps.Attacks.View(attackID)
 	if !ok {
 		writeError(w, http.StatusNotFound, "attack not found: "+attackID)
 		return

@@ -10,6 +10,67 @@
                 },
                 "type": "object"
             },
+            "api.attackInfo": {
+                "properties": {
+                    "completed_at": {
+                        "type": "string"
+                    },
+                    "id": {
+                        "type": "string"
+                    },
+                    "service": {
+                        "type": "string"
+                    },
+                    "started_at": {
+                        "type": "string"
+                    },
+                    "status": {
+                        "type": "string"
+                    },
+                    "workload_id": {
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "api.attackResultInfo": {
+                "properties": {
+                    "attack_id": {
+                        "type": "string"
+                    },
+                    "duration_ms": {
+                        "type": "integer"
+                    },
+                    "latency_p50_us": {
+                        "type": "integer"
+                    },
+                    "latency_p90_us": {
+                        "type": "integer"
+                    },
+                    "latency_p95_us": {
+                        "type": "integer"
+                    },
+                    "latency_p99_us": {
+                        "type": "integer"
+                    },
+                    "rate_actual": {
+                        "type": "number"
+                    },
+                    "service": {
+                        "type": "string"
+                    },
+                    "success_rate": {
+                        "type": "number"
+                    },
+                    "throughput_rps": {
+                        "type": "number"
+                    },
+                    "total_requests": {
+                        "type": "integer"
+                    }
+                },
+                "type": "object"
+            },
             "api.createDatasetRequest": {
                 "properties": {
                     "name": {
@@ -119,8 +180,19 @@
                 },
                 "type": "object"
             },
+            "api.validateWorkflowDocRequest": {
+                "properties": {
+                    "workflow": {
+                        "$ref": "#/components/schemas/workflow.Workflow"
+                    }
+                },
+                "type": "object"
+            },
             "attacker.Attack": {
                 "properties": {
+                    "completed_at": {
+                        "type": "string"
+                    },
                     "config": {
                         "$ref": "#/components/schemas/attacker.AttackConfig"
                     },
@@ -164,9 +236,6 @@
                     },
                     "redirects": {
                         "type": "integer"
-                    },
-                    "run_ref": {
-                        "type": "string"
                     },
                     "target": {
                         "$ref": "#/components/schemas/attacker.TargetSpec"
@@ -550,7 +619,7 @@
     "paths": {
         "/attacks": {
             "get": {
-                "description": "Returns a bare array of attacks. Optional query filters narrow by status,\nexperiment_id, and run_ref.",
+                "description": "Returns a bare array of attacks. Optional query filters narrow by status\nand experiment_id.",
                 "parameters": [
                     {
                         "description": "filter by attack status (e.g. running, completed)",
@@ -564,14 +633,6 @@
                         "description": "filter by experiment id",
                         "in": "query",
                         "name": "experiment_id",
-                        "schema": {
-                            "type": "string"
-                        }
-                    },
-                    {
-                        "description": "filter by linked run id",
-                        "in": "query",
-                        "name": "run_ref",
                         "schema": {
                             "type": "string"
                         }
@@ -598,7 +659,7 @@
                 ]
             },
             "post": {
-                "description": "Persist and launch a precision attack. The body is an attacker.AttackConfig.\nWhen run_ref references an existing run, meta_trace_id and workflow_label are\ninherited from the linked run if not set on the request. The response is an\ninline envelope with id, status, and started_at; the launched Attack object is\nretrievable via GET /attacks/{id}.",
+                "description": "Persist and launch a precision attack. The body is an attacker.AttackConfig.\nThe response is an inline envelope with id, status, and started_at; the launched\nAttack is retrievable via GET /attacks/{id}, and its final metrics via\nGET /attacks/{id}/result once it completes.",
                 "requestBody": {
                     "content": {
                         "application/json": {
@@ -620,7 +681,7 @@
                     "required": true
                 },
                 "responses": {
-                    "202": {
+                    "201": {
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -629,7 +690,7 @@
                                 }
                             }
                         },
-                        "description": "attack accepted; envelope contains id, status, started_at"
+                        "description": "attack created; envelope contains id, status, started_at"
                     },
                     "400": {
                         "content": {
@@ -699,7 +760,7 @@
                         "content": {
                             "application/json": {
                                 "schema": {
-                                    "$ref": "#/components/schemas/attacker.Attack"
+                                    "$ref": "#/components/schemas/api.attackInfo"
                                 }
                             }
                         },
@@ -717,6 +778,48 @@
                     }
                 },
                 "summary": "Get attack",
+                "tags": [
+                    "attacks"
+                ]
+            }
+        },
+        "/attacks/{id}/result": {
+            "get": {
+                "description": "Final vegeta metrics for a completed attack, normalized to manteion's\nAttackResultInfo (duration in ms, latency percentiles in microseconds).\nReturns 404 while the attack is still running (no result yet) so callers can\npoll; the body becomes available once the attack finalizes.",
+                "parameters": [
+                    {
+                        "description": "Attack ID",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/api.attackResultInfo"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/api.ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "attack not found, or result not ready yet"
+                    }
+                },
+                "summary": "Get attack result",
                 "tags": [
                     "attacks"
                 ]
@@ -1474,6 +1577,58 @@
                     }
                 },
                 "summary": "Register workflow",
+                "tags": [
+                    "workflows"
+                ]
+            }
+        },
+        "/workflows/validate": {
+            "post": {
+                "description": "Validates a DSL v2 document (structure, version, targets,\nnode/variant caps) without registering it. 200 {ok,name} on\nsuccess; 400 with the validator message otherwise.",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "oneOf": [
+                                    {
+                                        "type": "object"
+                                    },
+                                    {
+                                        "$ref": "#/components/schemas/api.validateWorkflowDocRequest",
+                                        "summary": "body",
+                                        "description": "workflow envelope"
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                    "description": "workflow envelope",
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {},
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "{ok: true, name: ...}"
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/api.ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "invalid JSON or workflow validation error"
+                    }
+                },
+                "summary": "Validate workflow document (stateless)",
                 "tags": [
                     "workflows"
                 ]

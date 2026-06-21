@@ -69,7 +69,6 @@ type AttackConfig struct {
 	DedupBypass   *DedupBypassSpec `json:"dedup_bypass,omitempty"`
 	MetaTraceID   string           `json:"meta_trace_id,omitempty"`
 	ExperimentID  string           `json:"experiment_id,omitempty"`
-	RunRef        string           `json:"run_ref,omitempty"`
 	WorkflowLabel string           `json:"workflow_label,omitempty"`
 }
 
@@ -124,10 +123,11 @@ func (c *AttackConfig) Validate() error {
 // Attack represents a running or completed vegeta attack. The atk and cancel
 // fields are runtime-only and intentionally excluded from JSON output.
 type Attack struct {
-	Config    AttackConfig  `json:"config"`
-	Status    string        `json:"status"`
-	StartedAt time.Time     `json:"started_at"`
-	Result    *AttackResult `json:"result,omitempty"`
+	Config      AttackConfig  `json:"config"`
+	Status      string        `json:"status"`
+	StartedAt   time.Time     `json:"started_at"`
+	CompletedAt *time.Time    `json:"completed_at,omitempty"`
+	Result      *AttackResult `json:"result,omitempty"`
 
 	atk    *vegeta.Attacker   `json:"-"`
 	cancel context.CancelFunc `json:"-"`
@@ -188,7 +188,10 @@ func (m *Manager) Launch(ctx context.Context, cfg AttackConfig, onComplete func(
 		attack.Result = FromMetrics(&metrics)
 		// If Stop() already set "stopped", leave it. Otherwise classify
 		// based on whether the context was cancelled (timeout/parent cancel)
-		// or completed naturally.
+		// or completed naturally. Callers must launch with a context that is
+		// NOT tied to an inbound request — otherwise the request returning
+		// cancels ctx and every attack finalizes as "stopped" (see
+		// handleCreateAttack, which uses context.WithoutCancel).
 		if attack.Status == "running" {
 			if ctx.Err() != nil {
 				attack.Status = "stopped"
@@ -196,6 +199,8 @@ func (m *Manager) Launch(ctx context.Context, cfg AttackConfig, onComplete func(
 				attack.Status = "completed"
 			}
 		}
+		completedAt := time.Now()
+		attack.CompletedAt = &completedAt
 		m.mu.Unlock()
 
 		if onComplete != nil {
@@ -212,6 +217,23 @@ func (m *Manager) Get(id string) (*Attack, bool) {
 	defer m.mu.RUnlock()
 	a, ok := m.attacks[id]
 	return a, ok
+}
+
+// View returns a consistent value snapshot of an attack under the read lock.
+// HTTP handlers must use this rather than Get: the launch goroutine mutates
+// Status, Result, and CompletedAt under the manager lock, so reading those
+// fields off a live *Attack (e.g. while JSON-marshaling a still-running attack)
+// is a data race. Result and CompletedAt are each assigned exactly once and
+// never mutated in place, so the copied pointers are safe to dereference after
+// the lock is released.
+func (m *Manager) View(id string) (Attack, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	a, ok := m.attacks[id]
+	if !ok {
+		return Attack{}, false
+	}
+	return *a, true
 }
 
 // Stop cancels a running attack. It halts vegeta synchronously so no further
@@ -251,6 +273,18 @@ func (m *Manager) List() []*Attack {
 	out := make([]*Attack, 0, len(m.attacks))
 	for _, a := range m.attacks {
 		out = append(out, a)
+	}
+	return out
+}
+
+// ViewAll returns value snapshots of all tracked attacks under the read lock —
+// the list-handler counterpart to View (see its note on why a copy is required).
+func (m *Manager) ViewAll() []Attack {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]Attack, 0, len(m.attacks))
+	for _, a := range m.attacks {
+		out = append(out, *a)
 	}
 	return out
 }
