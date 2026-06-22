@@ -14,7 +14,11 @@ spec:
     spec:
       containers:
         - name: zeus
-          image: zeus
+          # SHA-pinned for provenance: maps the running container to a specific
+          # zeus-go commit (= git tag v0.0.9). Built locally on VM2 (no registry),
+          # so pull policy is IfNotPresent — never reach out to docker.io.
+          image: zeus:ad2b8de
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
           env:
