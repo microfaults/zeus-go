@@ -86,12 +86,16 @@ func (s *Server) computeSummary() stats.Summary {
 		s.deps.Runs.CountByStatus(run.StatusStarting) +
 		s.deps.Runs.CountByStatus(run.StatusValidating) +
 		s.deps.Runs.CountByStatus(run.StatusCompleting)
-	activeAttacks := countActiveAttacks(s.deps.Attacks.List())
+	// ViewAll, not List: List hands out the live *Attack pointers, and the
+	// launch goroutine writes Status/Result under the manager lock the
+	// reader here doesn't hold -- a confirmed -race data race. ViewAll
+	// copies under the lock.
+	activeAttacks := countActiveAttacks(s.deps.Attacks.ViewAll())
 
 	return stats.ComputeSummary(activeRuns, activeAttacks, s.deps.Datasets.Count())
 }
 
-func countActiveAttacks(attacks []*attacker.Attack) int {
+func countActiveAttacks(attacks []attacker.Attack) int {
 	n := 0
 	for _, a := range attacks {
 		if a.Status == "running" {
