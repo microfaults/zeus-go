@@ -38,3 +38,15 @@ type DelaySpec struct {
 	MinMs int `json:"min_ms"`
 	MaxMs int `json:"max_ms"`
 }
+
+// Document returns the workflow as the JSON document the k6 engine
+// executes. It re-marshals the typed struct, which models the full DSL v2
+// surface -- extension fields outside the spec would not survive, which is
+// deliberate: zeus must not execute what it did not validate.
+func (w *Workflow) Document() []byte {
+	doc, err := json.Marshal(w)
+	if err != nil {
+		return nil
+	}
+	return doc
+}

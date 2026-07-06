@@ -52,14 +52,24 @@ func (s *Store) Create(r *Run) error {
 }
 
 // Get returns a run by ID.
+// Get returns a COPY of the run: the launcher advances a run's status from a
+// supervision goroutine while handlers read it, so handing out the live
+// pointer would race (the status field is written under s.mu but would be
+// read without it). Mutation goes through UpdateStatus/UpdateReason, which
+// re-lookup under the lock, so a copy loses nothing.
 func (s *Store) Get(id string) (*Run, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	r, ok := s.runs[id]
-	return r, ok
+	if !ok {
+		return nil, false
+	}
+	cp := *r
+	return &cp, true
 }
 
-// List returns runs matching the given filters.
+// List returns COPIES of the runs matching the given filters (see Get for
+// why copies).
 func (s *Store) List(filters ListFilters) []*Run {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -77,7 +87,8 @@ func (s *Store) List(filters ListFilters) []*Run {
 		if !filters.Since.IsZero() && r.StartedAt.Before(filters.Since) {
 			continue
 		}
-		out = append(out, r)
+		cp := *r
+		out = append(out, &cp)
 	}
 	return out
 }

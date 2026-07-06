@@ -46,6 +46,20 @@ func main() {
 	snapshots := stats.NewSnapshotStore()
 	broker := sse.NewBroker()
 
+	// k6 launcher: executes workflow runs as supervised subprocesses. The
+	// engine fetches pool data over HTTP from our own dataset content
+	// endpoint (ZEUS_SELF_URL is how the k6 process addresses this server --
+	// in-cluster that is the zeus Service DNS, not localhost).
+	selfURL := envOr("ZEUS_SELF_URL", "http://localhost"+addr)
+	launcher := run.NewLauncher(run.LauncherConfig{
+		K6Bin: envOr("ZEUS_K6_BIN", "k6"),
+		K6Dir: envOr("ZEUS_K6_DIR", "./k6"),
+		DatasetURL: func(datasetID string) string {
+			return selfURL + "/api/v1/datasets/" + datasetID + "/content"
+		},
+		Logger: logger,
+	}, runs, snapshots, broker)
+
 	// HTTP API server.
 	server := api.NewServer(api.Deps{
 		Workflows: workflows,
@@ -55,6 +69,7 @@ func main() {
 		Metrics:   metrics,
 		Snapshots: snapshots,
 		Broker:    broker,
+		Launcher:  launcher,
 	})
 
 	httpServer := &http.Server{
@@ -88,6 +103,7 @@ func main() {
 		logger.Error("shutdown error", "error", err)
 	}
 
+	launcher.Close()
 	manager.StopAll()
 	logger.Info("zeus stopped")
 }

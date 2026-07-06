@@ -178,17 +178,39 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 	// Set K6JobName after Create so rn.ID is guaranteed assigned.
 	rn.K6JobName = fmt.Sprintf("zeus-run-%s", rn.ID)
 
-	// Increment prometheus counter.
-	s.deps.Metrics.RunsStartedTotal.WithLabelValues(workflowID, wf.Name).Inc()
-	s.deps.Metrics.ActiveRuns.WithLabelValues().Inc()
-
-	writeJSON(w, http.StatusAccepted, createRunResponse{
+	// Snapshot the response BEFORE Launch: the launcher advances rn.Status
+	// from a supervision goroutine, so reading rn's fields after Launch
+	// would race that write.
+	resp := createRunResponse{
 		RunID:       rn.ID,
 		Status:      rn.Status,
 		MetaTraceID: rn.MetaTraceID,
 		K6JobName:   rn.K6JobName,
 		StartedAt:   rn.StartedAt,
-	})
+	}
+
+	// Hand the run to the k6 launcher: it owns every later status
+	// transition (validating → running → completing → completed/failed).
+	// A launch error already finalized the run as failed with the reason.
+	if s.deps.Launcher != nil {
+		if err := s.deps.Launcher.Launch(rn, wf.Document(), run.LaunchSpec{
+			VUs:           req.VUs,
+			DurationS:     req.DurationS,
+			Persona:       req.Persona,
+			BaseURL:       wf.BaseURL,
+			DatasetID:     datasetID,
+			WorkflowLabel: rn.WorkflowLabel,
+		}); err != nil {
+			writeError(w, http.StatusInternalServerError, "launch k6: "+err.Error())
+			return
+		}
+	}
+
+	// Increment prometheus counter.
+	s.deps.Metrics.RunsStartedTotal.WithLabelValues(workflowID, wf.Name).Inc()
+	s.deps.Metrics.ActiveRuns.WithLabelValues().Inc()
+
+	writeJSON(w, http.StatusAccepted, resp)
 }
 
 // --- GET /api/v1/workflows/{id}/runs ---
@@ -297,6 +319,11 @@ func (s *Server) handleStopRun(w http.ResponseWriter, r *http.Request) {
 	if err := s.deps.Runs.UpdateStatus(runID, run.StatusStopped); err != nil {
 		writeError(w, http.StatusConflict, err.Error())
 		return
+	}
+	// Status first, then kill: the launcher's supervision goroutine sees the
+	// context cancellation and leaves the terminal 'stopped' status alone.
+	if s.deps.Launcher != nil {
+		s.deps.Launcher.Stop(runID)
 	}
 
 	// Prune prometheus run_id labels and decrement active runs gauge.

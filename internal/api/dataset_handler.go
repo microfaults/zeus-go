@@ -265,3 +265,33 @@ func (s *Server) handleDeleteDataset(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// handleDatasetContent returns the full dataset as the flat pool map the k6
+// engine consumes: {"<pool>": [ {row}, ... ], ...}. This is the endpoint the
+// launcher passes as ZEUS_DATASET_ENDPOINT (engine setup() JSON.parses the
+// body and indexes it as data.<pool>). Distinct from /sample (one pool,
+// capped) and /{id} (metadata only) -- neither has the shape the engine
+// wants. No row cap: a run needs the whole pool, and datasets are already
+// size-bounded at ingest.
+//
+// @Summary      Dataset content (engine shape)
+// @Description  Returns the full { "<pool>": [rows...] } map the k6 engine consumes.
+// @Tags         datasets
+// @Produce      json
+// @Param        id   path      string  true  "Dataset ID"
+// @Success      200  {object}  map[string]any  "pool -> rows"
+// @Failure      404  {object}  api.ErrorResponse  "dataset not found"
+// @Router       /datasets/{id}/content [get]
+func (s *Server) handleDatasetContent(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	ds, ok := s.deps.Datasets.Get(id)
+	if !ok {
+		writeError(w, http.StatusNotFound, "dataset not found: "+id)
+		return
+	}
+	out := make(map[string][]map[string]any, len(ds.Pools))
+	for name, pool := range ds.Pools {
+		out[name] = pool.Rows
+	}
+	writeJSON(w, http.StatusOK, out)
+}

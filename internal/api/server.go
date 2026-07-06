@@ -27,6 +27,9 @@ type Deps struct {
 	Metrics   *stats.Metrics
 	Snapshots *stats.SnapshotStore
 	Broker    *sse.Broker
+	// Launcher executes workflow runs as supervised k6 subprocesses. nil =
+	// runs are accepted but never executed (test servers).
+	Launcher *run.Launcher
 }
 
 // Server holds shared dependencies and configures routing.
@@ -76,6 +79,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/datasets/{id}", s.handleGetDataset)
 	s.mux.HandleFunc("POST /api/v1/datasets/{id}/upload", s.handleUploadDataset)
 	s.mux.HandleFunc("GET /api/v1/datasets/{id}/sample", s.handleSampleDataset)
+	s.mux.HandleFunc("GET /api/v1/datasets/{id}/content", s.handleDatasetContent)
 	s.mux.HandleFunc("DELETE /api/v1/datasets/{id}", s.handleDeleteDataset)
 
 	// Attacks
