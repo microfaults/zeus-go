@@ -30,7 +30,11 @@ type LauncherConfig struct {
 	// fetches pool data from (ZEUS_DATASET_ENDPOINT). Required only for
 	// runs that reference a dataset.
 	DatasetURL func(datasetID string) string
-	Logger     *slog.Logger
+	// MaxRunDuration is the supervision deadline for runs whose spec
+	// carries no duration; runs with a DurationS get DurationS + 60s of
+	// grace instead. Default 30m.
+	MaxRunDuration time.Duration
+	Logger         *slog.Logger
 }
 
 // LaunchSpec carries the per-run execution parameters (from the create-run
@@ -70,6 +74,9 @@ func NewLauncher(cfg LauncherConfig, runs *Store, snapshots *stats.SnapshotStore
 	}
 	if cfg.K6Dir == "" {
 		cfg.K6Dir = "./k6"
+	}
+	if cfg.MaxRunDuration <= 0 {
+		cfg.MaxRunDuration = 30 * time.Minute
 	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
@@ -123,7 +130,14 @@ func (l *Launcher) Launch(rn *Run, flowDoc []byte, spec LaunchSpec) error {
 	}
 	args = append(args, "runner.js")
 
-	ctx, cancel := context.WithCancel(context.Background())
+	// Supervision deadline: DURATION is only advisory inside k6, so a wedged
+	// process would otherwise hold the run in 'running' forever and stall
+	// the control plane's phase.
+	timeout := l.cfg.MaxRunDuration
+	if spec.DurationS > 0 {
+		timeout = time.Duration(spec.DurationS)*time.Second + 60*time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	cmd := exec.CommandContext(ctx, l.cfg.K6Bin, args...)
 	cmd.Dir = l.cfg.K6Dir
 	tail := newTailBuffer(16 << 10)
@@ -181,10 +195,14 @@ func (l *Launcher) supervise(ctx context.Context, cmd *exec.Cmd, runID, flowPath
 	err := cmd.Wait()
 
 	l.mu.Lock()
+	cancel := l.cancel[runID]
 	delete(l.cancel, runID)
 	l.mu.Unlock()
 
 	defer func() {
+		if cancel != nil {
+			cancel() // release the deadline timer (runs after the ctx.Err() branching)
+		}
 		_ = os.Remove(flowPath)
 		_ = os.Remove(summaryPath)
 		if l.broker != nil {
@@ -193,6 +211,12 @@ func (l *Launcher) supervise(ctx context.Context, cmd *exec.Cmd, runID, flowPath
 	}()
 
 	if ctx.Err() != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			// The watchdog killed a wedged or overrunning k6 -- a
+			// launcher-owned failure, not an operator stop.
+			l.fail(runID, "run deadline exceeded")
+			return
+		}
 		// Killed via Stop/Close: the stop path owns the terminal status
 		// ('stopped'); just report what happened.
 		l.publishState(runID, StatusStopped, "killed")

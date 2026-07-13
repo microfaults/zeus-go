@@ -52,9 +52,26 @@ exit 0
 	return bin
 }
 
+// stubK6Sleep writes a k6 stand-in that never finishes on its own. exec so
+// the sleep IS the subprocess: a SIGKILL then closes the launcher's output
+// pipes instead of leaving an orphaned child holding them open.
+func stubK6Sleep(t *testing.T) string {
+	t.Helper()
+	bin := filepath.Join(t.TempDir(), "k6stub.sh")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexec sleep 60\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return bin
+}
+
 const goodSummary = `{"metrics":{"iterations":{"count":120},"http_reqs":{"count":120},"http_req_failed":{"passes":0},"http_req_duration":{"med":5,"p(95)":12,"p(99)":30}}}`
 
 func newTestLauncher(t *testing.T, k6bin string) (*Launcher, *Store, *stats.SnapshotStore, *sse.Broker) {
+	return newTestLauncherCfg(t, LauncherConfig{K6Bin: k6bin})
+}
+
+// newTestLauncherCfg wires a Launcher around cfg with a throwaway K6Dir.
+func newTestLauncherCfg(t *testing.T, cfg LauncherConfig) (*Launcher, *Store, *stats.SnapshotStore, *sse.Broker) {
 	t.Helper()
 	runs := NewStore()
 	snaps := stats.NewSnapshotStore()
@@ -65,7 +82,8 @@ func newTestLauncher(t *testing.T, k6bin string) (*Launcher, *Store, *stats.Snap
 	if err := os.WriteFile(filepath.Join(k6dir, "runner.js"), []byte("//stub"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	l := NewLauncher(LauncherConfig{K6Bin: k6bin, K6Dir: k6dir}, runs, snaps, broker)
+	cfg.K6Dir = k6dir
+	l := NewLauncher(cfg, runs, snaps, broker)
 	return l, runs, snaps, broker
 }
 
@@ -195,6 +213,66 @@ func TestLauncher_ThresholdBreachCompletes(t *testing.T) {
 	}
 	if got, _ := runs.Get("run-breach"); got.Reason != "thresholds breached" {
 		t.Fatalf("reason = %q, want %q", got.Reason, "thresholds breached")
+	}
+}
+
+// TestLauncher_DeadlineExceeded: a wedged k6 must not hold the run in
+// 'running' forever -- DurationS is only advisory inside k6. The supervision
+// deadline kills the process and fails the run with a distinguishable
+// reason, and the watchdog kill must NOT masquerade as an operator stop (Z3).
+func TestLauncher_DeadlineExceeded(t *testing.T) {
+	l, runs, snaps, broker := newTestLauncherCfg(t, LauncherConfig{
+		K6Bin:          stubK6Sleep(t),
+		MaxRunDuration: 300 * time.Millisecond,
+	})
+	defer l.Close()
+	rn := seedRun(t, runs, "run-wedge")
+	ch, unsub := broker.Subscribe("run-wedge")
+	defer unsub()
+
+	// No DurationS: the MaxRunDuration cap is the deadline.
+	if err := l.Launch(rn, []byte(`{}`), LaunchSpec{}); err != nil {
+		t.Fatalf("launch: %v", err)
+	}
+	waitStatus(t, runs, "run-wedge", StatusFailed)
+
+	if got, _ := runs.Get("run-wedge"); got.Reason != "run deadline exceeded" {
+		t.Fatalf("reason = %q, want %q", got.Reason, "run deadline exceeded")
+	}
+	if _, ok := snaps.Get("run-wedge"); ok {
+		t.Fatal("wedged run must not save a stats snapshot")
+	}
+	l.Close() // drain supervision so the run's event channel is closed
+	for ev := range ch {
+		if strings.Contains(ev.Data, `"status":"stopped"`) {
+			t.Fatalf("watchdog kill published a bogus 'stopped' state: %s", ev.Data)
+		}
+	}
+}
+
+// TestLauncher_StopKeepsStopped: the DELETE-driven kill (handler sets the
+// terminal 'stopped' first, then cancels) must survive supervision -- the
+// launcher reports the kill but never overwrites the operator's status.
+func TestLauncher_StopKeepsStopped(t *testing.T) {
+	l, runs, snaps, _ := newTestLauncher(t, stubK6Sleep(t))
+	defer l.Close()
+	rn := seedRun(t, runs, "run-stop")
+	if err := l.Launch(rn, []byte(`{}`), LaunchSpec{}); err != nil {
+		t.Fatalf("launch: %v", err)
+	}
+
+	// Mimic handleStopRun: status first, then kill.
+	if err := runs.UpdateStatus("run-stop", StatusStopped); err != nil {
+		t.Fatalf("stop transition: %v", err)
+	}
+	l.Stop("run-stop")
+	l.Close() // wait for supervision to finish
+
+	if got, _ := runs.Get("run-stop"); got.Status != StatusStopped {
+		t.Fatalf("status = %q, want %q", got.Status, StatusStopped)
+	}
+	if _, ok := snaps.Get("run-stop"); ok {
+		t.Fatal("stopped run must not save a stats snapshot")
 	}
 }
 
