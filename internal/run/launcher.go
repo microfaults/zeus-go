@@ -3,6 +3,7 @@ package run
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -199,9 +200,19 @@ func (l *Launcher) supervise(ctx context.Context, cmd *exec.Cmd, runID, flowPath
 	}
 
 	if err != nil {
-		reason := fmt.Sprintf("k6 exited: %v; tail: %s", err, tail.String())
-		l.fail(runID, reason)
-		return
+		// Exit 99 = thresholds crossed: k6 ran the load to completion and
+		// wrote the full summary export; a degraded target is the
+		// measurement, not a run failure. Record the breach and fall
+		// through to the completion path so the stats survive.
+		var exitErr *exec.ExitError
+		if !errors.As(err, &exitErr) || exitErr.ExitCode() != 99 {
+			reason := fmt.Sprintf("k6 exited: %v; tail: %s", err, tail.String())
+			l.fail(runID, reason)
+			return
+		}
+		if uerr := l.runs.UpdateReason(runID, "thresholds breached"); uerr != nil {
+			l.cfg.Logger.Warn("launcher: persist breach reason", "run_id", runID, "error", uerr)
+		}
 	}
 
 	l.transition(runID, StatusCompleting)

@@ -3,6 +3,7 @@ package run
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -26,19 +27,12 @@ while [ $# -gt 0 ]; do
   shift
 done
 if [ -n "$out" ]; then printf '%s' '` + summary + `' > "$out"; fi
-exit ` + itoa(code) + `
+exit ` + strconv.Itoa(code) + `
 `
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	return bin
-}
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	return string(rune('0' + n))
 }
 
 // stubK6ArgsDump writes a k6 stand-in that records its argv (one arg per
@@ -159,9 +153,9 @@ func TestLauncher_MetaTraceIDEnv(t *testing.T) {
 }
 
 // TestLauncher_FailingK6: a non-zero k6 exit finalizes the run as failed with
-// the tail captured in the reason.
+// the tail captured in the reason and no stats snapshot.
 func TestLauncher_FailingK6(t *testing.T) {
-	l, runs, _, _ := newTestLauncher(t, stubK6(t, "", 1))
+	l, runs, snaps, _ := newTestLauncher(t, stubK6(t, "", 1))
 	defer l.Close()
 	rn := seedRun(t, runs, "run-fail")
 
@@ -171,6 +165,36 @@ func TestLauncher_FailingK6(t *testing.T) {
 	waitStatus(t, runs, "run-fail", StatusFailed)
 	if got, _ := runs.Get("run-fail"); got.Reason == "" {
 		t.Fatal("failed run should carry a reason")
+	}
+	if _, ok := snaps.Get("run-fail"); ok {
+		t.Fatal("failed run must not save a stats snapshot")
+	}
+}
+
+// TestLauncher_ThresholdBreachCompletes: k6 exit 99 means thresholds were
+// crossed, not that execution failed -- the load ran to completion and the
+// summary export is intact. A degraded mesh is the experiment working as
+// designed, so the run completes with its stats preserved and the breach
+// recorded as the reason (Z2).
+func TestLauncher_ThresholdBreachCompletes(t *testing.T) {
+	l, runs, snaps, _ := newTestLauncher(t, stubK6(t, goodSummary, 99))
+	defer l.Close()
+	rn := seedRun(t, runs, "run-breach")
+
+	if err := l.Launch(rn, []byte(`{}`), LaunchSpec{DurationS: 1}); err != nil {
+		t.Fatalf("launch: %v", err)
+	}
+	waitStatus(t, runs, "run-breach", StatusCompleted)
+
+	rs, ok := snaps.Get("run-breach")
+	if !ok {
+		t.Fatal("threshold breach destroyed the stats snapshot")
+	}
+	if rs.Iterations != 120 {
+		t.Fatalf("summary parse wrong: %+v", rs)
+	}
+	if got, _ := runs.Get("run-breach"); got.Reason != "thresholds breached" {
+		t.Fatalf("reason = %q, want %q", got.Reason, "thresholds breached")
 	}
 }
 
