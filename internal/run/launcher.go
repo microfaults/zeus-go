@@ -41,6 +41,7 @@ type LaunchSpec struct {
 	BaseURL       string // workflow base_url; empty = flow embeds absolute URLs
 	DatasetID     string // empty = no dataset (an empty pool map is staged)
 	WorkflowLabel string // rides W3C baggage as atropos.workflow
+	MetaTraceID   string // rides W3C baggage as meta-trace-id (the id the create-run response echoed)
 }
 
 // Launcher supervises one k6 subprocess per run and is the ONLY writer of a
@@ -103,6 +104,9 @@ func (l *Launcher) Launch(rn *Run, flowDoc []byte, spec LaunchSpec) error {
 	args = append(args, "-e", "PERSONA="+spec.Persona)
 	if spec.WorkflowLabel != "" {
 		args = append(args, "-e", "ZEUS_WORKFLOW_LABEL="+spec.WorkflowLabel)
+	}
+	if spec.MetaTraceID != "" {
+		args = append(args, "-e", "ZEUS_META_TRACE_ID="+spec.MetaTraceID)
 	}
 	if spec.BaseURL != "" {
 		args = append(args, "-e", "BASE_URL="+spec.BaseURL)

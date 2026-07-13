@@ -522,7 +522,7 @@ export function createEngine(flowPath, personaPath, dataPath) {
 
   const baseURL = __ENV.BASE_URL || flow.base_url || "http://localhost:8080";
   const defaultDelay = flow.default_delay || null;
-  const metaTraceID = generateMetaTraceID();
+  const metaTraceID = __ENV.ZEUS_META_TRACE_ID || generateMetaTraceID();
   const workflowLabel = __ENV.ZEUS_WORKFLOW_LABEL || flow.name;
 
   const vus = __ENV.VUS ? parseInt(__ENV.VUS) : 10;

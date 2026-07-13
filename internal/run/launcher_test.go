@@ -3,6 +3,7 @@ package run
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -38,6 +39,23 @@ func itoa(n int) string {
 		return "0"
 	}
 	return string(rune('0' + n))
+}
+
+// stubK6ArgsDump writes a k6 stand-in that records its argv (one arg per
+// line) to argsPath and exits cleanly, for asserting the constructed
+// command line.
+func stubK6ArgsDump(t *testing.T, argsPath string) string {
+	t.Helper()
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "k6stub.sh")
+	script := `#!/bin/sh
+printf '%s\n' "$@" > "` + argsPath + `"
+exit 0
+`
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return bin
 }
 
 const goodSummary = `{"metrics":{"iterations":{"count":120},"http_reqs":{"count":120},"http_req_failed":{"passes":0},"http_req_duration":{"med":5,"p(95)":12,"p(99)":30}}}`
@@ -100,6 +118,43 @@ func TestLauncher_HappyPath(t *testing.T) {
 	}
 	if rs.LatencyP95 != 12*time.Millisecond {
 		t.Fatalf("p95 = %v, want 12ms", rs.LatencyP95)
+	}
+}
+
+// TestLauncher_MetaTraceIDEnv: the meta_trace_id minted at run creation must
+// reach k6 as ZEUS_META_TRACE_ID — otherwise the engine mints its own id and
+// every request's baggage disagrees with the id zeus reported (Z1).
+func TestLauncher_MetaTraceIDEnv(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		traceID string
+	}{
+		{"injected when set", "trace-z1"},
+		{"omitted when empty", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			argsPath := filepath.Join(t.TempDir(), "args.txt")
+			l, runs, _, _ := newTestLauncher(t, stubK6ArgsDump(t, argsPath))
+			defer l.Close()
+			rn := seedRun(t, runs, "run-trace")
+
+			if err := l.Launch(rn, []byte(`{}`), LaunchSpec{MetaTraceID: tc.traceID}); err != nil {
+				t.Fatalf("launch: %v", err)
+			}
+			waitStatus(t, runs, "run-trace", StatusCompleted)
+
+			raw, err := os.ReadFile(argsPath)
+			if err != nil {
+				t.Fatalf("read args dump: %v", err)
+			}
+			if tc.traceID != "" {
+				if !strings.Contains(string(raw), "-e\nZEUS_META_TRACE_ID="+tc.traceID+"\n") {
+					t.Fatalf("k6 args missing ZEUS_META_TRACE_ID env pair; args:\n%s", raw)
+				}
+			} else if strings.Contains(string(raw), "ZEUS_META_TRACE_ID") {
+				t.Fatalf("k6 args must not carry an empty ZEUS_META_TRACE_ID; args:\n%s", raw)
+			}
+		})
 	}
 }
 
