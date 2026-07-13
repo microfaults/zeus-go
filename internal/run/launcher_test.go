@@ -3,6 +3,8 @@ package run
 import (
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -25,7 +27,7 @@ while [ $# -gt 0 ]; do
   shift
 done
 if [ -n "$out" ]; then printf '%s' '` + summary + `' > "$out"; fi
-exit ` + itoa(code) + `
+exit ` + strconv.Itoa(code) + `
 `
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
@@ -33,16 +35,43 @@ exit ` + itoa(code) + `
 	return bin
 }
 
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
+// stubK6ArgsDump writes a k6 stand-in that records its argv (one arg per
+// line) to argsPath and exits cleanly, for asserting the constructed
+// command line.
+func stubK6ArgsDump(t *testing.T, argsPath string) string {
+	t.Helper()
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "k6stub.sh")
+	script := `#!/bin/sh
+printf '%s\n' "$@" > "` + argsPath + `"
+exit 0
+`
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
 	}
-	return string(rune('0' + n))
+	return bin
+}
+
+// stubK6Sleep writes a k6 stand-in that never finishes on its own. exec so
+// the sleep IS the subprocess: a SIGKILL then closes the launcher's output
+// pipes instead of leaving an orphaned child holding them open.
+func stubK6Sleep(t *testing.T) string {
+	t.Helper()
+	bin := filepath.Join(t.TempDir(), "k6stub.sh")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexec sleep 60\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return bin
 }
 
 const goodSummary = `{"metrics":{"iterations":{"count":120},"http_reqs":{"count":120},"http_req_failed":{"passes":0},"http_req_duration":{"med":5,"p(95)":12,"p(99)":30}}}`
 
 func newTestLauncher(t *testing.T, k6bin string) (*Launcher, *Store, *stats.SnapshotStore, *sse.Broker) {
+	return newTestLauncherCfg(t, LauncherConfig{K6Bin: k6bin})
+}
+
+// newTestLauncherCfg wires a Launcher around cfg with a throwaway K6Dir.
+func newTestLauncherCfg(t *testing.T, cfg LauncherConfig) (*Launcher, *Store, *stats.SnapshotStore, *sse.Broker) {
 	t.Helper()
 	runs := NewStore()
 	snaps := stats.NewSnapshotStore()
@@ -53,7 +82,8 @@ func newTestLauncher(t *testing.T, k6bin string) (*Launcher, *Store, *stats.Snap
 	if err := os.WriteFile(filepath.Join(k6dir, "runner.js"), []byte("//stub"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	l := NewLauncher(LauncherConfig{K6Bin: k6bin, K6Dir: k6dir}, runs, snaps, broker)
+	cfg.K6Dir = k6dir
+	l := NewLauncher(cfg, runs, snaps, broker)
 	return l, runs, snaps, broker
 }
 
@@ -103,10 +133,47 @@ func TestLauncher_HappyPath(t *testing.T) {
 	}
 }
 
+// TestLauncher_MetaTraceIDEnv: the meta_trace_id minted at run creation must
+// reach k6 as ZEUS_META_TRACE_ID — otherwise the engine mints its own id and
+// every request's baggage disagrees with the id zeus reported (Z1).
+func TestLauncher_MetaTraceIDEnv(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		traceID string
+	}{
+		{"injected when set", "trace-z1"},
+		{"omitted when empty", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			argsPath := filepath.Join(t.TempDir(), "args.txt")
+			l, runs, _, _ := newTestLauncher(t, stubK6ArgsDump(t, argsPath))
+			defer l.Close()
+			rn := seedRun(t, runs, "run-trace")
+
+			if err := l.Launch(rn, []byte(`{}`), LaunchSpec{MetaTraceID: tc.traceID}); err != nil {
+				t.Fatalf("launch: %v", err)
+			}
+			waitStatus(t, runs, "run-trace", StatusCompleted)
+
+			raw, err := os.ReadFile(argsPath)
+			if err != nil {
+				t.Fatalf("read args dump: %v", err)
+			}
+			if tc.traceID != "" {
+				if !strings.Contains(string(raw), "-e\nZEUS_META_TRACE_ID="+tc.traceID+"\n") {
+					t.Fatalf("k6 args missing ZEUS_META_TRACE_ID env pair; args:\n%s", raw)
+				}
+			} else if strings.Contains(string(raw), "ZEUS_META_TRACE_ID") {
+				t.Fatalf("k6 args must not carry an empty ZEUS_META_TRACE_ID; args:\n%s", raw)
+			}
+		})
+	}
+}
+
 // TestLauncher_FailingK6: a non-zero k6 exit finalizes the run as failed with
-// the tail captured in the reason.
+// the tail captured in the reason and no stats snapshot.
 func TestLauncher_FailingK6(t *testing.T) {
-	l, runs, _, _ := newTestLauncher(t, stubK6(t, "", 1))
+	l, runs, snaps, _ := newTestLauncher(t, stubK6(t, "", 1))
 	defer l.Close()
 	rn := seedRun(t, runs, "run-fail")
 
@@ -116,6 +183,96 @@ func TestLauncher_FailingK6(t *testing.T) {
 	waitStatus(t, runs, "run-fail", StatusFailed)
 	if got, _ := runs.Get("run-fail"); got.Reason == "" {
 		t.Fatal("failed run should carry a reason")
+	}
+	if _, ok := snaps.Get("run-fail"); ok {
+		t.Fatal("failed run must not save a stats snapshot")
+	}
+}
+
+// TestLauncher_ThresholdBreachCompletes: k6 exit 99 means thresholds were
+// crossed, not that execution failed -- the load ran to completion and the
+// summary export is intact. A degraded mesh is the experiment working as
+// designed, so the run completes with its stats preserved and the breach
+// recorded as the reason (Z2).
+func TestLauncher_ThresholdBreachCompletes(t *testing.T) {
+	l, runs, snaps, _ := newTestLauncher(t, stubK6(t, goodSummary, 99))
+	defer l.Close()
+	rn := seedRun(t, runs, "run-breach")
+
+	if err := l.Launch(rn, []byte(`{}`), LaunchSpec{DurationS: 1}); err != nil {
+		t.Fatalf("launch: %v", err)
+	}
+	waitStatus(t, runs, "run-breach", StatusCompleted)
+
+	rs, ok := snaps.Get("run-breach")
+	if !ok {
+		t.Fatal("threshold breach destroyed the stats snapshot")
+	}
+	if rs.Iterations != 120 {
+		t.Fatalf("summary parse wrong: %+v", rs)
+	}
+	if got, _ := runs.Get("run-breach"); got.Reason != "thresholds breached" {
+		t.Fatalf("reason = %q, want %q", got.Reason, "thresholds breached")
+	}
+}
+
+// TestLauncher_DeadlineExceeded: a wedged k6 must not hold the run in
+// 'running' forever -- DurationS is only advisory inside k6. The supervision
+// deadline kills the process and fails the run with a distinguishable
+// reason, and the watchdog kill must NOT masquerade as an operator stop (Z3).
+func TestLauncher_DeadlineExceeded(t *testing.T) {
+	l, runs, snaps, broker := newTestLauncherCfg(t, LauncherConfig{
+		K6Bin:          stubK6Sleep(t),
+		MaxRunDuration: 300 * time.Millisecond,
+	})
+	defer l.Close()
+	rn := seedRun(t, runs, "run-wedge")
+	ch, unsub := broker.Subscribe("run-wedge")
+	defer unsub()
+
+	// No DurationS: the MaxRunDuration cap is the deadline.
+	if err := l.Launch(rn, []byte(`{}`), LaunchSpec{}); err != nil {
+		t.Fatalf("launch: %v", err)
+	}
+	waitStatus(t, runs, "run-wedge", StatusFailed)
+
+	if got, _ := runs.Get("run-wedge"); got.Reason != "run deadline exceeded" {
+		t.Fatalf("reason = %q, want %q", got.Reason, "run deadline exceeded")
+	}
+	if _, ok := snaps.Get("run-wedge"); ok {
+		t.Fatal("wedged run must not save a stats snapshot")
+	}
+	l.Close() // drain supervision so the run's event channel is closed
+	for ev := range ch {
+		if strings.Contains(ev.Data, `"status":"stopped"`) {
+			t.Fatalf("watchdog kill published a bogus 'stopped' state: %s", ev.Data)
+		}
+	}
+}
+
+// TestLauncher_StopKeepsStopped: the DELETE-driven kill (handler sets the
+// terminal 'stopped' first, then cancels) must survive supervision -- the
+// launcher reports the kill but never overwrites the operator's status.
+func TestLauncher_StopKeepsStopped(t *testing.T) {
+	l, runs, snaps, _ := newTestLauncher(t, stubK6Sleep(t))
+	defer l.Close()
+	rn := seedRun(t, runs, "run-stop")
+	if err := l.Launch(rn, []byte(`{}`), LaunchSpec{}); err != nil {
+		t.Fatalf("launch: %v", err)
+	}
+
+	// Mimic handleStopRun: status first, then kill.
+	if err := runs.UpdateStatus("run-stop", StatusStopped); err != nil {
+		t.Fatalf("stop transition: %v", err)
+	}
+	l.Stop("run-stop")
+	l.Close() // wait for supervision to finish
+
+	if got, _ := runs.Get("run-stop"); got.Status != StatusStopped {
+		t.Fatalf("status = %q, want %q", got.Status, StatusStopped)
+	}
+	if _, ok := snaps.Get("run-stop"); ok {
+		t.Fatal("stopped run must not save a stats snapshot")
 	}
 }
 

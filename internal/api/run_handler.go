@@ -200,6 +200,7 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 			BaseURL:       wf.BaseURL,
 			DatasetID:     datasetID,
 			WorkflowLabel: rn.WorkflowLabel,
+			MetaTraceID:   rn.MetaTraceID,
 		}); err != nil {
 			writeError(w, http.StatusInternalServerError, "launch k6: "+err.Error())
 			return
