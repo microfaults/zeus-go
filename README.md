@@ -1,196 +1,103 @@
 # zeus-go
 
-Precision load-generation and attack orchestration platform. Combines **k6 sidecars** for workflow-driven traffic with **Zeus**, a Go service that launches targeted [Vegeta](https://github.com/tsenart/vegeta) attacks against endpoints outside the normal workflow path.
+Execution plane of the faults-lab performance-attribution instrument. Zeus does exactly what the
+control plane (manteion) tells it to: it executes **workflow runs** by launching
+[k6](https://k6.io) as a supervised subprocess per run, and fires **additive vegeta attacks** at
+specific endpoints. It keeps no durable state — a run's truth lives in memory for the life of the
+process and in the stats snapshot parsed from k6's summary.
 
-## Architecture
+## How a run works
 
-```
-┌─────────────┐     ┌─────────────┐
-│  k6-browse   │     │ k6-checkout  │    k6 sidecars run DSL v2
-│  (sidecar)   │     │  (sidecar)   │    tree-structured flows
-└──────┬───────┘     └──────┬───────┘
-       │                     │
-       ▼                     ▼
-┌──────────────────────────────────┐
-│              Zeus                │     Go service: attack mgmt,
-│   policy engine                  │     policy engine, dedup bypass
-│   vegeta attacker                │
-└──────────────┬───────────────────┘
-               │ vegeta attacks
-               ▼
-┌──────────────────────────────────┐
-│      Target Application          │
-└──────────────────────────────────┘
-```
+1. manteion registers a DSL-v2 workflow document (`POST /api/v1/workflows`; zeus keys its store on
+   the document's own `id`, minting one only if absent — manteion stamps its workflow id in at
+   materialize time so the two planes agree).
+2. `POST /api/v1/workflows/{id}/runs` creates the run and launches k6: the document is staged under
+   `$ZEUS_K6_DIR/flows/zeus-runs/<run_id>.json`, k6 executes `runner.js` with the flow, persona,
+   VUs/duration, dataset endpoint, and correlation ids passed as `-e` environment.
+3. The run walks a state machine: `starting → validating → running → completing →
+   completed` (or `failed`; `stopped` via DELETE; `rejected` at create for invalid documents).
+   Every transition publishes a `run.state` event on `GET /api/v1/runs/{id}/events` (SSE).
+4. On exit, zeus parses k6's `--summary-export` into the snapshot store —
+   `GET /api/v1/runs/{id}/stats` serves p50/p90/p95/p99, rates, and request counts.
+5. A **threshold breach is still a completed run**: k6 exit code 99 (any threshold, including the
+   engine's built-in `dropped_iterations == 0` open-loop guard) completes with the reason
+   `thresholds breached` recorded and the stats preserved. Load-quality judgment belongs to
+   manteion's verdict, not to zeus. Any other nonzero exit is `failed` with the output tail as the
+   reason.
+6. A supervision deadline (run duration + grace, capped) guarantees a wedged k6 cannot leave a run
+   `running` forever — the watchdog kills it and marks the run `failed` with a deadline reason.
 
-**k6 sidecars** generate realistic user traffic through DSL v2 tree-structured flows (browse, checkout, etc.) while **Zeus** independently hammers specific endpoints with Vegeta.
+**Restart amnesia is by design**: runs, attacks, and datasets are in-memory. After a zeus restart,
+`GET /api/v1/runs/{id}` for a pre-restart run returns 404 — pollers must treat that as terminal,
+not transient.
 
-All requests carry `meta-trace-id` and `atropos.workflow` via W3C Baggage headers for distributed trace correlation and rule scoping.
+## The k6 engine
 
-## Components
+`k6/runner.js` + `k6/scripts/lib/` execute tree-structured DSL-v2 flows (`sequence`, `request`,
+`delay`, `optional`, `repeat`, `if` — see [`docs/workflow-dsl-v2.md`](docs/workflow-dsl-v2.md) for
+the authoritative node set, extract scoping, and variant semantics). Load is **open-loop**
+(`constant-arrival-rate`): offered RPS is held constant across phases so a frozen (faster) service
+cannot implicitly inflate load on the rest of the mesh. Personas gate optional branches by
+probability. Datasets referenced by a flow's data schema are fetched once at k6 setup from
+`GET /api/v1/datasets/{id}/content` (flat `{pool: [rows]}`).
 
-### Zeus (Go service)
+Every request carries W3C Baggage: `meta-trace-id` (from `ZEUS_META_TRACE_ID`, i.e. the exact id
+zeus returned to manteion at run create) and `atropos.workflow` for rule scoping.
 
-REST API for managing attacks and policy rules.
+## HTTP surface
 
-| Endpoint | Description |
+| Group | Endpoints |
 |---|---|
-| `POST /api/v1/attacks` | Launch a Vegeta attack |
-| `GET /api/v1/attacks/{id}` | Get attack status/metrics |
-| `DELETE /api/v1/attacks/{id}` | Stop attack |
-| `POST /api/v1/policies` | Register policy rule |
-| `GET /api/v1/policies` | List rules |
-| `DELETE /api/v1/policies/{id}` | Remove rule |
-| `GET /api/v1/status` | System status |
+| Workflows | `POST/GET /api/v1/workflows`, `GET/DELETE /{id}`, `POST /workflows/validate` (stateless), `POST /{id}/validate` |
+| Runs | `POST/GET /workflows/{id}/runs`, `GET /api/v1/runs`, `GET/DELETE /runs/{run_id}`, `GET /runs/{run_id}/events` (SSE), `GET /runs/{run_id}/stats` |
+| Datasets | `POST/GET /api/v1/datasets`, `GET/DELETE /{id}`, `POST /{id}/upload` (NDJSON), `GET /{id}/sample`, `GET /{id}/content` |
+| Attacks | `POST/GET /api/v1/attacks`, `GET/DELETE /{id}`, `GET /{id}/result`, `GET /{id}/stats` |
+| Ops | `GET /healthz`, `GET /readyz`, `GET /api/v1/status`, `GET /api/v1/metrics` (Prometheus), `GET /api/v1/metrics/summary` |
 
-**Policy engine** evaluates rules on a 10-second interval and auto-launches attacks when conditions are met. Rules support cooldowns to prevent duplicate triggers.
+[`docs/api-contract.md`](docs/api-contract.md) describes the contract; where it and the code
+disagree, the code is authoritative.
 
-**Dedup bypass** mutates requests to defeat idempotency checks via `X-Idempotency-Key` header injection or query-param nonce.
+## Environment
 
-### k6 (load generation sidecars)
+| Variable | Default | Purpose |
+|---|---|---|
+| `ZEUS_ADDR` | `:8080` | Listen address |
+| `ZEUS_SELF_URL` | `http://localhost` + addr | Base URL the k6 subprocess uses to fetch dataset content |
+| `ZEUS_K6_BIN` | `k6` | k6 binary |
+| `ZEUS_K6_DIR` | `./k6` | k6 assets root (runner.js, flows, personas, staged run documents) |
 
-A generic, config-driven k6 runner with a DSL v2 tree-walking engine. Test scenarios are defined entirely in JSON using 7 node types: `sequence`, `parallel`, `delay`, `optional`, `request`, `repeat`, `if`.
+Per-run knobs (persona, VUs, duration, base URL, dataset, workflow label, meta trace id) arrive in
+the run-create request and are passed to k6 as environment, not read from zeus's own env.
 
-**Flows** (`k6/flows/`) define node trees with scoped extracts, variants, and delays:
+## Deploy
 
-```json
-{
-  "version": "2",
-  "name": "online-boutique-browse",
-  "targets": ["frontend", "productcatalogservice"],
-  "default_delay": { "min_ms": 3000, "max_ms": 8000 },
-  "root": {
-    "type": "sequence",
-    "children": [
-      { "type": "request", "id": "homepage", "method": "GET", "path": "/" },
-      {
-        "type": "optional", "probability": "explore",
-        "child": {
-          "type": "request", "id": "view_product",
-          "method": "GET", "path": "/product/{{data.products.id}}"
-        }
-      }
-    ]
-  }
-}
-```
-
-**Personas** (`k6/personas/`) control user behavior via probability maps and think times:
-
-| Persona | Behavior | Explore | Engage | Commit | Think time |
-|---|---|---|---|---|---|
-| `cautious` | Window-shopper | 90% | 20% | 5% | 2-5s |
-| `aggressive` | Spendthrift | 50% | 80% | 70% | 0.5-1.5s |
-| `balanced` | Bargain-hunter | 95% | 40% | 30% | 3-8s |
-
-**Template expressions** resolve at runtime:
-
-- `{{data.<collection>.<field>}}` - random item from data pool
-- `{{steps.<id>.<key>}}` - extracted value from a prior step (scope-chain walk)
-- `{{random_int(min,max)}}` / `{{random_choice(a,b,c)}}` - randomization
-- `{{env.VAR}}` - environment variable
-
-**Variants** let a request node carry a weighted set of sparse patches, so one step can model a realistic body mix (regions, feature flags, path variations) without duplicating the node:
-
-```json
-"variants": [
-  { "weight": 60, "set": { "body.region": "us-west" } },
-  { "weight": 30, "set": { "body.region": "eu-west" } },
-  { "weight": 10, "set": { "body.region": "ap-south", "body.post_type": 2 } }
-]
-```
-
-See `docs/workflow-dsl-v2.md` for the full DSL v2 specification and `docs/examples/deathstarbench-social-network.md` for a realistic multi-service workflow using `sequence`, `parallel`, `optional`, `delay`, and `variants` together.
-
-## Quick Start
-
-```bash
-# Set the target application URL
-export BASE_URL=http://frontend:8080
-
-# Run everything
-docker compose up
-```
-
-This starts:
-- **zeus** on port 8080
-- **k6-browse** - browsing flow with `cautious` persona (10 VUs, 5 min)
-- **k6-checkout** - checkout flow with `aggressive` persona (5 VUs, 5 min)
-
-### Configuration
-
-Override via environment variables:
-
-```bash
-BROWSE_VUS=20 BROWSE_DURATION=10m \
-CHECKOUT_VUS=10 CHECKOUT_DURATION=10m \
-BASE_URL=http://my-app:8080 \
-docker compose up
-```
-
-### Run Zeus standalone
-
-```bash
-go build -o zeus ./cmd/zeus
-ZEUS_ADDR=:9090 ./zeus
-```
-
-## Project Structure
-
-```
-cmd/
-  zeus/              Entry point
-  gen-dataset/       Synthetic dataset generator (NDJSON + JSON output)
-internal/
-  api/               HTTP handlers and routing
-  attacker/          Vegeta attack orchestration
-  workflow/          Workflow store, DSL v2 types, schema validation
-  run/               Run lifecycle, state machine, filtered store
-  dataset/           Dataset store with go-cache TTL, NDJSON ingest
-  stats/             Prometheus custom registry, run snapshots
-  sse/               SSE event broker for live run tailing
-  id/                Shared cryptographic hex ID generation
-  dedup/             Idempotency bypass strategies (header, query)
-  trace/             W3C Baggage header helpers
-k6/
-  runner.js          Generic config-driven k6 entry point
-  scripts/lib/       JS modules (engine, template, zeus client, tracing)
-  flows/             DSL v2 workflow definitions (JSON)
-  personas/          User behavior profiles (JSON)
-docs/
-  workflow-dsl-v2.md      DSL v2 specification
-  api-contract.md         Zeus HTTP API contract
-  cleanup-legacy-k6.md    Follow-up cleanup task list
-  examples/               End-to-end workflow examples
-```
-
-## Documentation
-
-| Doc | What it covers |
-|---|---|
-| [`docs/workflow-dsl-v2.md`](docs/workflow-dsl-v2.md) | Full JSON schema, node types (`sequence`, `parallel`, `delay`, `optional`, `request`), extract scope rules, variant semantics, data-schema handshake. |
-| [`docs/api-contract.md`](docs/api-contract.md) | Zeus control-plane HTTP surface: workflows, runs, datasets, attacks, stats, SSE events, Prometheus metrics catalog, baggage wiring. |
-| [`docs/examples/deathstarbench-social-network.md`](docs/examples/deathstarbench-social-network.md) | Realistic DSL v2 workflow against Death Star Bench Social Network — multi-service, `parallel` fan-out, weighted body variants. |
-| [`docs/cleanup-legacy-k6.md`](docs/cleanup-legacy-k6.md) | What gets deleted and migrated in the follow-up code refactor. |
+The Dockerfile bundles the `grafana/k6:0.49.0` binary plus the `k6/` assets, so the container is
+self-sufficient. Production runs as a single SHA-pinned container on VM2 (nerdctl); manteion
+reaches it via `ZEUS_URL`.
 
 ## Development
 
 ```bash
-# Run Go tests
-go test ./...
-
-# Build all binaries
-go build ./...
-
-# Run zeus locally
-go run ./cmd/zeus
-
-# Format + vet
-go fmt ./... && go vet ./...
+go build ./... && go vet ./...
+go test -race ./...
+./scripts/smoke.sh          # contract smoke against a running zeus
+go run ./cmd/zeus           # needs k6 on PATH for real runs
 ```
 
-## Requirements
+## Layout
 
-- Go 1.25+
-- Docker & Docker Compose (for containerized runs)
-- k6 (if running scripts outside Docker)
+```
+cmd/zeus/            entry point + config
+cmd/gen-dataset/     synthetic dataset generator (NDJSON)
+internal/api/        handlers + routing
+internal/run/        run store, state machine, k6 subprocess launcher
+internal/attacker/   vegeta attack manager
+internal/workflow/   DSL v2 store + schema validation
+internal/dataset/    TTL dataset store + NDJSON ingest
+internal/stats/      Prometheus registry + run snapshots
+internal/sse/        run.state event broker
+internal/dedup/      idempotency-bypass request mutators
+k6/                  runner.js, engine, flows, personas
+```
+
+Internal research project of the UCSC Faults Lab (Peter Alvaro's group). Not licensed for external use.
