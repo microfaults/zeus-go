@@ -8,7 +8,12 @@ COPY . .
 RUN CGO_ENABLED=0 go build -o /zeus ./cmd/zeus
 
 # grafana/k6 ships a static binary; copy it rather than building from source.
-FROM grafana/k6:0.49.0 AS k6
+# 0.55 or newer is required: the engine assets under k6/scripts/lib use optional
+# chaining and nullish coalescing, which 0.49's Babel transpiler rejects with
+# "SyntaxError: Unexpected token" at load time -- every run dies on exit 107
+# before a single request. 0.52 replaced Babel/goja with Sobek, which parses
+# them natively.
+FROM grafana/k6:0.55.0 AS k6
 
 FROM alpine:3.21
 RUN apk --no-cache add ca-certificates
