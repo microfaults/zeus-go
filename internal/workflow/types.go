@@ -7,18 +7,23 @@ import (
 
 // Workflow represents a Zeus DSL v2 workflow document.
 type Workflow struct {
-	ID                string              `json:"id"`
-	Name              string              `json:"name"`
-	Version           string              `json:"version"`
-	Description       string              `json:"description"`
-	Targets           []string            `json:"targets"`
-	BaseURL           string              `json:"base_url"`
-	EstimatedRPSPerVU int                 `json:"estimated_rps_per_vu"`
-	Thresholds        map[string][]string `json:"thresholds"`
-	DefaultDelay      *DelaySpec          `json:"default_delay,omitempty"`
-	DataSchema        *DataSchema         `json:"data_schema,omitempty"`
-	Root              json.RawMessage     `json:"root"`
-	CreatedAt         time.Time           `json:"created_at"`
+	ID                string   `json:"id"`
+	Name              string   `json:"name"`
+	Version           string   `json:"version"`
+	Description       string   `json:"description"`
+	Targets           []string `json:"targets"`
+	BaseURL           string   `json:"base_url"`
+	EstimatedRPSPerVU int      `json:"estimated_rps_per_vu"`
+	// ThinkScale multiplies every persona/delay sleep in the k6 engine
+	// (1 = authored pacing; use e.g. 0.01 for near-zero — an explicit 0 is indistinguishable from unset on the wire). Load-profile knob: journeys
+	// are ~99% think-time at lab latencies, so this sets iteration duration
+	// and hence the VU requirement (gate G2). Omitted/0 -> engine default 1.
+	ThinkScale   float64             `json:"think_scale,omitempty"`
+	Thresholds   map[string][]string `json:"thresholds"`
+	DefaultDelay *DelaySpec          `json:"default_delay,omitempty"`
+	DataSchema   *DataSchema         `json:"data_schema,omitempty"`
+	Root         json.RawMessage     `json:"root"`
+	CreatedAt    time.Time           `json:"created_at"`
 }
 
 // DataSchema describes the data pools a workflow expects.
