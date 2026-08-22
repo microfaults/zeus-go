@@ -40,7 +40,12 @@ type LauncherConfig struct {
 // LaunchSpec carries the per-run execution parameters (from the create-run
 // request plus the workflow document).
 type LaunchSpec struct {
-	VUs           int
+	VUs int
+	// RateRPS is the offered iteration arrival rate for the open-loop
+	// generator. When > 0 it rides to k6 as -e RATE and overrides the legacy
+	// vus * estimated_rps_per_vu derivation, decoupling the rate from the VU
+	// pool (gate G2): vus then means concurrency budget only.
+	RateRPS       float64
 	DurationS     int
 	Persona       string // default "cautious" (a file under K6Dir/personas)
 	BaseURL       string // workflow base_url; empty = flow embeds absolute URLs
@@ -121,6 +126,9 @@ func (l *Launcher) Launch(rn *Run, flowDoc []byte, spec LaunchSpec) error {
 	}
 	if spec.VUs > 0 {
 		args = append(args, "-e", "VUS="+strconv.Itoa(spec.VUs))
+	}
+	if spec.RateRPS > 0 {
+		args = append(args, "-e", "RATE="+strconv.FormatFloat(spec.RateRPS, 'f', -1, 64))
 	}
 	if spec.DurationS > 0 {
 		args = append(args, "-e", "DURATION="+strconv.Itoa(spec.DurationS)+"s")

@@ -20,6 +20,7 @@ type createRunRequest struct {
 	DatasetID     string            `json:"dataset_id"`
 	DatasetInline map[string]any    `json:"dataset_inline"`
 	VUs           int               `json:"vus"`
+	RateRPS       float64           `json:"rate_rps"`
 	DurationS     int               `json:"duration_s"`
 	Persona       string            `json:"persona"`
 	MetaTraceID   string            `json:"meta_trace_id"`
@@ -195,6 +196,7 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 	if s.deps.Launcher != nil {
 		if err := s.deps.Launcher.Launch(rn, wf.Document(), run.LaunchSpec{
 			VUs:           req.VUs,
+			RateRPS:       req.RateRPS,
 			DurationS:     req.DurationS,
 			Persona:       req.Persona,
 			BaseURL:       wf.BaseURL,

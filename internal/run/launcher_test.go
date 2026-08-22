@@ -292,3 +292,42 @@ func TestLauncher_StageAndCleanup(t *testing.T) {
 		t.Fatalf("staged flow doc was not cleaned up: %v", err)
 	}
 }
+
+// TestLauncher_RateEnvPair: LaunchSpec.RateRPS decouples the offered arrival
+// rate from the VU pool (gate G2: vus was doubling as the rate multiplier,
+// so capacity could never be raised without changing the load). RateRPS > 0
+// must ride to k6 as -e RATE=<v>; zero must omit the pair (engine falls back
+// to vus * estimated_rps_per_vu).
+func TestLauncher_RateEnvPair(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		rate float64
+		want string
+	}{
+		{"rate set", 3.5, "-e\nRATE=3.5\n"},
+		{"rate zero omitted", 0, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			argsPath := filepath.Join(t.TempDir(), "args.txt")
+			l, runs, _, _ := newTestLauncher(t, stubK6ArgsDump(t, argsPath))
+			defer l.Close()
+			rn := seedRun(t, runs, "run-rate-"+tc.name)
+
+			if err := l.Launch(rn, []byte(`{}`), LaunchSpec{RateRPS: tc.rate}); err != nil {
+				t.Fatalf("launch: %v", err)
+			}
+			waitStatus(t, runs, "run-rate-"+tc.name, StatusCompleted)
+
+			raw, err := os.ReadFile(argsPath)
+			if err != nil {
+				t.Fatalf("read args dump: %v", err)
+			}
+			if tc.want != "" && !strings.Contains(string(raw), tc.want) {
+				t.Fatalf("k6 args missing RATE env pair; args:\n%s", raw)
+			}
+			if tc.want == "" && strings.Contains(string(raw), "RATE=") {
+				t.Fatalf("k6 args must not carry RATE when unset; args:\n%s", raw)
+			}
+		})
+	}
+}

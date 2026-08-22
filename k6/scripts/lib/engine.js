@@ -113,6 +113,16 @@ function applyPatch(obj, dotPath, value) {
 
 // ── Delay ───────────────────────────────────────────────────────────
 
+// Set once per VU from flow.think_scale in buildEngine; scales every
+// persona/delay sleep so load profiles can trade journey realism for a
+// smaller VU requirement without editing flow documents.
+let THINK_SCALE = 1;
+
+function scaledSleep(ms) {
+  const s = (ms * THINK_SCALE) / 1000;
+  if (s > 0) sleep(s);
+}
+
 function sleepDelay(spec, persona) {
   if (!spec) return;
   if (spec.persona_key && persona?.delays) {
@@ -121,7 +131,7 @@ function sleepDelay(spec, persona) {
   }
   if (typeof spec.min_ms === "number" && typeof spec.max_ms === "number") {
     const ms = spec.min_ms + Math.random() * (spec.max_ms - spec.min_ms);
-    sleep(ms / 1000);
+    scaledSleep(ms);
   }
 }
 
@@ -391,7 +401,7 @@ function walkDelay(node, _scope, ctx) {
     sleepDelay({ persona_key: node.persona_key }, ctx.persona);
   } else if (typeof node.min_ms === "number" && typeof node.max_ms === "number") {
     const ms = node.min_ms + Math.random() * (node.max_ms - node.min_ms);
-    sleep(ms / 1000);
+    scaledSleep(ms);
   }
   return true;
 }
@@ -528,7 +538,17 @@ export function createEngine(flowPath, personaPath, dataPath) {
   const vus = __ENV.VUS ? parseInt(__ENV.VUS) : 10;
   const duration = __ENV.DURATION || "5m";
   const rpsPerVU = flow.estimated_rps_per_vu || 1;
-  const targetRPS = vus * rpsPerVU;
+  // RATE (from LaunchSpec.RateRPS) decouples offered arrival rate from the VU
+  // pool (gate G2). Without it, vus doubles as the rate multiplier and the
+  // pool can never be sized independently of the load. estimated_rps_per_vu
+  // remains only as the legacy fallback derivation.
+  const targetRPS = __ENV.RATE ? parseFloat(__ENV.RATE) : vus * rpsPerVU;
+  // think_scale (flow-level, injected alongside base_url) multiplies every
+  // persona/delay sleep. Journeys are ~99% think-time at lab latencies, so
+  // this is the knob that sets iteration duration and hence the VU
+  // requirement (VUs >= rate x iteration duration; see gate G2).
+  THINK_SCALE = typeof flow.think_scale === "number" && flow.think_scale >= 0
+    ? flow.think_scale : 1;
 
   // Open-loop generator: hold offered RPS constant across phases so a cached
   // service does not implicitly inflate load on un-frozen services. See the
