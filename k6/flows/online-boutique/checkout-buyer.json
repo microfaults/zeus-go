@@ -1,0 +1,102 @@
+{
+  "$schema": "https://faults-lab.dev/zeus/workflow.schema.json",
+  "version": "2",
+  "name": "online-boutique-checkout-buyer",
+  "description": "Committed buyer: browse one pinned product, cart it, always check out. Straight sequence (numeric-gate-free) with a deliberately bounded checkout keyspace — product and quantity are literals so the checkout POST body varies only by the user row (50 users), keeping baseline replay coverage of a frozen checkoutservice feasible (coupon-collector over 50 keys). Cart hygiene: committing every journey empties the session cart, so per-VU cookie jars cannot accumulate cross-iteration cart state into the keyspace. Mix with the browse flow for a 'mostly checkout' population.",
+  "targets": [
+    "frontend",
+    "productcatalogservice",
+    "cartservice",
+    "checkoutservice",
+    "paymentservice",
+    "shippingservice",
+    "emailservice",
+    "currencyservice"
+  ],
+  "base_url": "http://frontend:8080",
+  "estimated_rps_per_vu": 1,
+  "default_delay": {
+    "min_ms": 2000,
+    "max_ms": 6000
+  },
+  "thresholds": {
+    "http_req_failed": ["rate<0.1"],
+    "http_req_duration": ["p(95)<3000"]
+  },
+  "data_schema": {
+    "pools": {
+      "users": {
+        "fields": [
+          "email",
+          "street_address",
+          "zip_code",
+          "city",
+          "state",
+          "country",
+          "credit_card_number",
+          "credit_card_expiration_month",
+          "credit_card_expiration_year",
+          "credit_card_cvv"
+        ],
+        "min_size": 1
+      }
+    }
+  },
+  "root": {
+    "type": "sequence",
+    "id": "buyer-session",
+    "children": [
+      {
+        "type": "request",
+        "id": "homepage",
+        "method": "GET",
+        "path": "/",
+        "expect": { "status": [200] }
+      },
+      {
+        "type": "request",
+        "id": "view_product",
+        "method": "GET",
+        "path": "/product/OLJCESPC7Z",
+        "expect": { "status": [200] }
+      },
+      {
+        "type": "request",
+        "id": "add_to_cart",
+        "method": "POST",
+        "path": "/cart",
+        "body": {
+          "product_id": "OLJCESPC7Z",
+          "quantity": "1"
+        },
+        "expect": { "status": [200, 302] }
+      },
+      {
+        "type": "request",
+        "id": "view_cart",
+        "method": "GET",
+        "path": "/cart",
+        "expect": { "status": [200] }
+      },
+      {
+        "type": "request",
+        "id": "checkout",
+        "method": "POST",
+        "path": "/cart/checkout",
+        "body": {
+          "email": "{{data.users.email}}",
+          "street_address": "{{data.users.street_address}}",
+          "zip_code": "{{data.users.zip_code}}",
+          "city": "{{data.users.city}}",
+          "state": "{{data.users.state}}",
+          "country": "{{data.users.country}}",
+          "credit_card_number": "{{data.users.credit_card_number}}",
+          "credit_card_expiration_month": "{{data.users.credit_card_expiration_month}}",
+          "credit_card_expiration_year": "{{data.users.credit_card_expiration_year}}",
+          "credit_card_cvv": "{{data.users.credit_card_cvv}}"
+        },
+        "expect": { "status": [200, 302] }
+      }
+    ]
+  }
+}
