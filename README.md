@@ -101,3 +101,10 @@ k6/                  runner.js, engine, flows, personas
 ```
 
 Internal research project of the UCSC Faults Lab (Peter Alvaro's group). Not licensed for external use.
+
+## Project report
+
+This component is documented in the UCSC master's project report
+*Safe Evolution and Interventional Fault Attribution in Microservice
+Meshes* (Pranay Mundra, 2026) — Part II, as the execution plane of the
+faults-lab instrument.
