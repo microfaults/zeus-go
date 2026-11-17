@@ -6,16 +6,16 @@ All paths are under `/api/v1`. Request and response bodies are JSON unless noted
 
 ## Run lifecycle state machine
 
-A run has one of six states:
+A run has one of eight states:
 
 ```
 POST /runs
     → starting     (k6 container created, dataset binding queued)
     → validating    (data schema validation running)
-    → running       (k6 executing iterations)
-    → completing    (k6 finished, stats flushing)
-    → completed     (terminal, stats available)
-       | stopped    (terminal, user cancelled via DELETE)
+    → running       (k6 executing iterations; interim stats on /stats and the event stream)
+    → completing    (k6 exited; zeus reads its summary export)
+    → completed     (terminal; final stats from k6's summary export)
+       | stopped    (terminal, user cancelled via DELETE; stats gathered up to the stop are kept)
        | failed     (terminal, runtime error after execution started)
        | rejected   (terminal, data validation failed; no k6 ever ran)
 ```
@@ -153,8 +153,8 @@ GET /api/v1/workflows/{id}/runs
 ```
 
 ```json
-// response 200
-{ "runs": [ { "run_id", "status", "started_at", "ended_at", "labels" } ] }
+// response 200 -- each element is a full run document (see "Get a run")
+{ "runs": [ { "id", "workflow_id", "status", "started_at", "ended_at", "labels", ... } ] }
 ```
 
 #### Get a run (cross-workflow)
@@ -166,18 +166,24 @@ GET /api/v1/runs/{run_id}
 ```json
 // response 200
 {
-  "run_id": "...",
+  "id": "...",
   "workflow_id": "...",
+  "workflow_name": "browse",
   "experiment_id": "...",
+  "dataset_id": "...",
   "status": "running",
-  "started_at": "...",
-  "ended_at": null,
   "meta_trace_id": "...",
+  "workflow_label": "browse",
   "labels": { "phase": "baseline" },
-  "k6_job_name": "...",
-  "summary": { /* embedded stats, same shape as /runs/{id}/stats */ }
+  "k6_job_name": "zeus-run-<id>",
+  "started_at": "...",
+  "ended_at": "...",   // omitted until the run is terminal
+  "reason": "..."      // omitted unless set (failure reason, "thresholds breached", ...)
 }
 ```
+
+The run's key is `id`. (The create response above names the same value `run_id`.) The run
+document carries no stats; read them from `GET /runs/{run_id}/stats`.
 
 #### List all runs (with filters)
 
@@ -192,8 +198,16 @@ DELETE /api/v1/runs/{run_id}
 ```
 
 ```
-204 — stopped; k6 job terminated, final stats flushed.
+204 — stopped; k6 killed.
+404 — run not found
+409 — run already terminal (completed | stopped | failed | rejected)
 ```
+
+k6 is killed, so it writes no summary export. The stats gathered from k6's live output up to
+the stop are kept: once zeus has drained k6's last output (normally well under a second),
+`GET /runs/{run_id}/stats` serves them as the run's final snapshot with `"status": "stopped"`,
+`"final": true`, `"source": "k6_stream"`. The run's Prometheus series keep their last values
+(see "Cardinality budget"). The event stream sends that final `stats.snapshot` and then closes.
 
 #### Streaming event tail
 
@@ -203,20 +217,32 @@ GET /api/v1/runs/{run_id}/events
 
 ```
 200 text/event-stream (SSE)
-event: step.ok
-data: {"step_id":"compose-post","latency_ms":42,"status":200,"variant_index":1}
-
-event: step.drop
-data: {"step_id":"compose-post","reason":"expectation","expected":[200],"got":500}
-
-event: iteration.done
-data: {"iteration":4001,"status":"ok","duration_ms":1240}
+event: run.state
+data: {"run_id":"...","status":"running","detail":""}
 
 event: stats.snapshot
-data: { /* periodic stats summary */ }
+data: { /* the run's stats snapshot, same document as GET /runs/{run_id}/stats */ }
+
+: heartbeat
 ```
 
-Used by manteion for live dashboards, not aggregated stats collection.
+Two event types are emitted, nothing else:
+
+- `run.state` on every status change. `detail` carries the failure reason for `failed`, and
+  `killed` when a stopped run's k6 process has been reaped.
+- `stats.snapshot` every 2 seconds (at most 5) while the run is in flight (`"final": false`),
+  and once more with the final snapshot (`"final": true`) when the run ends.
+
+On connect the stream first sends the run's current `run.state` and, if one exists, its latest
+`stats.snapshot`. A comment line (`: heartbeat`) is sent every 10 seconds (at most 15). The stream
+stays open for the whole run, however long, regardless of the server's write timeout, and zeus
+closes it once the run is terminal. A client that connects to an already-terminal run gets the
+state and final snapshot and then the stream closes. Events carry no `id`; `Last-Event-ID` is not
+honored and a subscriber starts at the live edge. Slow subscribers may miss events (each has a
+256-event buffer).
+
+Used by manteion for live dashboards; poll `GET /runs/{run_id}/stats` for the authoritative final
+numbers.
 
 ### 2. Dataset management
 
@@ -320,29 +346,45 @@ GET /api/v1/runs/{run_id}/stats
 // response 200
 {
   "run_id": "...",
-  "status": "completed",
-  "started_at": "...",
-  "ended_at": "...",
-  "requests": {
-    "sent": 12345,
-    "dropped_expectation": 12,
-    "dropped_timeout": 5,
-    "by_step": {
-      "compose-post": { "sent": 200, "ok": 198, "dropped": 2 }
-    },
-    "by_variant": {
-      "compose-post": { "0": 120, "1": 60, "2": 20 }
-    },
-    "by_status": { "200": 12000, "302": 250, "500": 95 }
-  },
-  "latencies": {
-    "all": { "p50_ms": 42, "p90_ms": 110, "p95_ms": 180, "p99_ms": 450, "max_ms": 1200 },
-    "by_step": { "homepage": { "p50_ms": 10, "p99_ms": 55 } }
-  },
-  "iterations": { "completed": 4000, "failed": 14, "in_progress": 50 },
-  "workflow_context": { "active_vus": 50, "estimated_rps": 100 }
+  "workflow_id": "...",
+  "status": "running",          // the run's status when the snapshot was taken
+  "final": false,               // false = interim (run in flight); true = will not change again
+  "source": "k6_stream",        // "k6_summary" | "k6_stream" (see below)
+  "duration": 12000000000,      // elapsed run time so far, nanoseconds
+  "iterations": 412,            // k6 iterations
+  "requests_sent": 1648,        // k6 http_reqs
+  "requests_ok": 1640,          // http_reqs minus k6 http_req_failed
+  "requests_dropped": 0,        // k6 dropped_iterations (open-loop arrivals skipped)
+  "active_vus": 50,             // k6's last vus value; 0 in final snapshots
+  "latency_p50": 42000000,      // http_req_duration percentiles, nanoseconds
+  "latency_p95": 180000000,
+  "latency_p99": 450000000,
+  "variant_distribution": null, // reserved; the k6 engine does not report variant picks
+  "updated_at": "...",          // when this snapshot was taken
+  "finalized_at": "..."         // final snapshots only
 }
+
+// response 200, before the run has started k6 (or for a run that never did)
+{ "run_id": "...", "status": "no stats available yet" }
+
+// 404 -- run not found
 ```
+
+While the run is in flight the snapshot is **interim**: zeus aggregates k6's live JSON output as it
+arrives and refreshes the snapshot every 2 seconds (at most 5). Interim latency percentiles come
+from a fixed-size log-bucketed sketch and are within ~1% of the exact value.
+
+When the run ends the snapshot becomes **final** (`"final": true`):
+
+| Run ended as | `source` | Numbers |
+|---|---|---|
+| `completed` (including a threshold breach, k6 exit 99) | `k6_summary` | k6's `--summary-export`, as before. Exact percentiles. |
+| `completed` but the summary export is missing or unreadable | `k6_stream` | stream totals |
+| `stopped` (DELETE) | `k6_stream` | stream totals gathered up to the stop |
+| `failed` | `k6_stream` | stream totals gathered up to the failure (all zeros if k6 never ran load) |
+
+The final snapshot can trail the terminal status by a moment while zeus drains k6's last output, so
+a client that wants the final numbers polls until `"final": true`.
 
 #### Per-attack stats
 
@@ -540,16 +582,14 @@ Zeus uses a direct `go-prometheus` registry. Not routed through the OTel collect
 ```
 zeus_runs_started_total{workflow_id, workflow_name}
 zeus_runs_completed_total{workflow_id, workflow_name, status}
-    # status: completed | stopped | failed | rejected
+    # status: completed | stopped | failed
 
-zeus_requests_sent_total{run_id, workflow_id, step_id, target_service, method}
-zeus_requests_ok_total{run_id, workflow_id, step_id, target_service, status_code}
-zeus_requests_dropped_total{run_id, workflow_id, step_id, drop_reason}
-    # drop_reason: expectation | timeout | error | variant_skip
-
-zeus_variant_picks_total{run_id, workflow_id, step_id, variant_index}
-zeus_iterations_total{run_id, workflow_id, status}
-    # status: ok | partial | failed
+zeus_requests_sent_total{run_id, workflow_id, step_id}      # k6 http_reqs
+zeus_requests_ok_total{run_id, workflow_id, step_id}        # k6 http_req_failed == 0
+zeus_requests_dropped_total{run_id, workflow_id, step_id, reason}
+    # reason: dropped_iteration (k6 dropped_iterations; step_id is ""). Nonzero = the open-loop
+    # generator could not offer the configured rate; the run is invalid for delta math.
+zeus_iterations_total{run_id, workflow_id}                  # k6 iterations
 
 zeus_attacks_started_total{experiment_id, dedup_strategy}
 zeus_attacks_hits_total{attack_id, target_service, dedup_strategy}
@@ -561,30 +601,32 @@ zeus_datasets_bytes_ingested_total{dataset_id, pool}
 ### Histograms
 
 ```
-zeus_request_duration_seconds{run_id, workflow_id, step_id, target_service, status_code}
-zeus_step_duration_seconds{run_id, workflow_id, step_id}
-zeus_iteration_duration_seconds{run_id, workflow_id}
+zeus_request_duration_seconds{run_id, workflow_id, step_id}  # k6 http_req_duration
+zeus_iteration_duration_seconds{run_id, workflow_id}         # k6 iteration_duration
 zeus_attack_request_duration_seconds{attack_id, target_service}
 ```
 
 ### Gauges
 
 ```
-zeus_active_runs{workflow_id}
-zeus_active_vus{run_id, workflow_id}
+zeus_active_runs{}
+zeus_active_vus{run_id}                                      # k6 vus; 0 once the run ends
 zeus_active_attacks{}
 zeus_datasets_total{}
 zeus_dataset_size_bytes{dataset_id}
 ```
 
+The per-run families (those with `run_id`) are fed from k6's live JSON output while the run is in
+flight, sample by sample, so they advance continuously. `step_id` is the request's k6 `name` tag,
+which the engine sets to the DSL request node's `id` (the dataset fetch in k6 `setup()` is named by
+its URL). There is no per-step duration or variant-pick family: k6's output carries neither.
+
 ### Cardinality budget
 
-The danger labels are `run_id`, `step_id`, `variant_index`, and `status_code`.
+The danger labels are `run_id` and `step_id`.
 
-- **`run_id`** — high cardinality over time, bounded at any instant by the active run set. Counters and histograms keep `run_id` only while the run is active. On run completion (`DELETE /runs/{run_id}`), zeus calls `DeleteLabelValues` to prune the series. Post-completion, aggregate stats are accessible via `GET /runs/{run_id}/stats` (read from a finalized stats snapshot), not from Prometheus.
-- **`step_id`** — bounded by the workflow DSL. Typical workflows have fewer than 50 steps. Cap at 100 per workflow; reject registrations above that at schema validation time.
-- **`variant_index`** — bounded by the longest variants list. Cap at 16. Document it.
-- **`status_code`** — naturally bounded (~20 values in practice).
+- **`run_id`** — a run's series keep their final values after the run ends (completed, stopped or failed), so a scrape after the end still sees the full totals, and are removed when the run's record is evicted from the run store. **Zeus has no run eviction today**: run records, their snapshots and their series live until the process restarts, so `/metrics` grows by roughly 4 × steps + 4 series (plus histogram buckets) per run over a long-lived process. Final aggregate stats stay available via `GET /runs/{run_id}/stats`.
+- **`step_id`** — bounded by the workflow DSL (one value per request node id). Typical workflows have fewer than 50 steps.
 - **Never label by `meta_trace_id`.** It is a per-run random 32-hex and would destroy Prometheus.
 - **`attack_id`** is short-lived (attacks are minutes, not hours) and bounded by the active attack set.
 
