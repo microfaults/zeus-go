@@ -83,7 +83,7 @@ func newTestLauncherCfg(t *testing.T, cfg LauncherConfig) (*Launcher, *Store, *s
 		t.Fatal(err)
 	}
 	cfg.K6Dir = k6dir
-	l := NewLauncher(cfg, runs, snaps, broker)
+	l := NewLauncher(cfg, runs, snaps, broker, stats.NewMetrics())
 	return l, runs, snaps, broker
 }
 
@@ -94,6 +94,18 @@ func seedRun(t *testing.T, runs *Store, id string) *Run {
 		t.Fatal(err)
 	}
 	return rn
+}
+
+func waitFinal(t *testing.T, snaps *stats.SnapshotStore, id string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if rs, ok := snaps.Get(id); ok && rs.Final {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("run %s has no final snapshot", id)
 }
 
 func waitStatus(t *testing.T, runs *Store, id, want string) {
@@ -130,6 +142,9 @@ func TestLauncher_HappyPath(t *testing.T) {
 	}
 	if rs.LatencyP95 != 12*time.Millisecond {
 		t.Fatalf("p95 = %v, want 12ms", rs.LatencyP95)
+	}
+	if !rs.Final || rs.Source != stats.SourceSummary || rs.Status != StatusCompleted || rs.FinalizedAt == nil {
+		t.Fatalf("completed snapshot must be final from the summary export: %+v", rs)
 	}
 }
 
@@ -171,7 +186,8 @@ func TestLauncher_MetaTraceIDEnv(t *testing.T) {
 }
 
 // TestLauncher_FailingK6: a non-zero k6 exit finalizes the run as failed with
-// the tail captured in the reason and no stats snapshot.
+// the tail captured in the reason; its snapshot is the (here empty) stream
+// totals, final and marked failed -- never a lingering interim one.
 func TestLauncher_FailingK6(t *testing.T) {
 	l, runs, snaps, _ := newTestLauncher(t, stubK6(t, "", 1))
 	defer l.Close()
@@ -184,8 +200,9 @@ func TestLauncher_FailingK6(t *testing.T) {
 	if got, _ := runs.Get("run-fail"); got.Reason == "" {
 		t.Fatal("failed run should carry a reason")
 	}
-	if _, ok := snaps.Get("run-fail"); ok {
-		t.Fatal("failed run must not save a stats snapshot")
+	waitFinal(t, snaps, "run-fail")
+	if rs, _ := snaps.Get("run-fail"); rs.Status != StatusFailed || rs.Source != stats.SourceStream || rs.RequestsSent != 0 {
+		t.Fatalf("failed run snapshot = %+v, want final stream snapshot with status failed", rs)
 	}
 }
 
@@ -239,10 +256,10 @@ func TestLauncher_DeadlineExceeded(t *testing.T) {
 	if got, _ := runs.Get("run-wedge"); got.Reason != "run deadline exceeded" {
 		t.Fatalf("reason = %q, want %q", got.Reason, "run deadline exceeded")
 	}
-	if _, ok := snaps.Get("run-wedge"); ok {
-		t.Fatal("wedged run must not save a stats snapshot")
-	}
 	l.Close() // drain supervision so the run's event channel is closed
+	if rs, ok := snaps.Get("run-wedge"); !ok || !rs.Final || rs.Status != StatusFailed {
+		t.Fatalf("wedged run snapshot = %+v, want final with status failed", rs)
+	}
 	for ev := range ch {
 		if strings.Contains(ev.Data, `"status":"stopped"`) {
 			t.Fatalf("watchdog kill published a bogus 'stopped' state: %s", ev.Data)
@@ -271,8 +288,8 @@ func TestLauncher_StopKeepsStopped(t *testing.T) {
 	if got, _ := runs.Get("run-stop"); got.Status != StatusStopped {
 		t.Fatalf("status = %q, want %q", got.Status, StatusStopped)
 	}
-	if _, ok := snaps.Get("run-stop"); ok {
-		t.Fatal("stopped run must not save a stats snapshot")
+	if rs, ok := snaps.Get("run-stop"); !ok || !rs.Final || rs.Status != StatusStopped {
+		t.Fatalf("stopped run snapshot = %+v, want final with status stopped", rs)
 	}
 }
 

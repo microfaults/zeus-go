@@ -17,9 +17,15 @@ type ListFilters struct {
 }
 
 // Store is a thread-safe in-memory store for runs.
+//
+// Zeus never evicts runs on its own: a record lives until Delete removes it
+// (nothing in zeus calls Delete today), i.e. for the process lifetime.
+// OnEvict hooks release whatever else is keyed by the run (Prometheus
+// series, stats snapshots) at that point.
 type Store struct {
-	mu   sync.RWMutex
-	runs map[string]*Run
+	mu      sync.RWMutex
+	runs    map[string]*Run
+	onEvict []func(id string)
 }
 
 // NewStore creates an empty run store.
@@ -125,14 +131,27 @@ func (s *Store) UpdateReason(id string, reason string) error {
 	return nil
 }
 
-// Delete removes a run by ID.
-func (s *Store) Delete(id string) error {
+// OnEvict registers fn to run (outside the store lock) after a run record
+// is removed by Delete.
+func (s *Store) OnEvict(fn func(id string)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.onEvict = append(s.onEvict, fn)
+}
+
+// Delete evicts a run by ID and then runs the OnEvict hooks.
+func (s *Store) Delete(id string) error {
+	s.mu.Lock()
 	if _, exists := s.runs[id]; !exists {
+		s.mu.Unlock()
 		return fmt.Errorf("run: id %q not found", id)
 	}
 	delete(s.runs, id)
+	hooks := append([]func(string){}, s.onEvict...)
+	s.mu.Unlock()
+	for _, fn := range hooks {
+		fn(id)
+	}
 	return nil
 }
 

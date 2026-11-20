@@ -190,6 +190,12 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 		StartedAt:   rn.StartedAt,
 	}
 
+	// Count the run before handing it over: the launcher decrements the
+	// active gauge when it finalizes the run, which can happen before
+	// Launch even returns.
+	s.deps.Metrics.RunsStartedTotal.WithLabelValues(workflowID, wf.Name).Inc()
+	s.deps.Metrics.ActiveRuns.WithLabelValues().Inc()
+
 	// Hand the run to the k6 launcher: it owns every later status
 	// transition (validating → running → completing → completed/failed).
 	// A launch error already finalized the run as failed with the reason.
@@ -204,14 +210,12 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 			WorkflowLabel: rn.WorkflowLabel,
 			MetaTraceID:   rn.MetaTraceID,
 		}); err != nil {
+			s.deps.Metrics.ActiveRuns.WithLabelValues().Dec()
+			s.deps.Metrics.RunsCompletedTotal.WithLabelValues(workflowID, wf.Name, run.StatusFailed).Inc()
 			writeError(w, http.StatusInternalServerError, "launch k6: "+err.Error())
 			return
 		}
 	}
-
-	// Increment prometheus counter.
-	s.deps.Metrics.RunsStartedTotal.WithLabelValues(workflowID, wf.Name).Inc()
-	s.deps.Metrics.ActiveRuns.WithLabelValues().Inc()
 
 	writeJSON(w, http.StatusAccepted, resp)
 }
@@ -294,13 +298,18 @@ func (s *Server) handleGetRun(w http.ResponseWriter, r *http.Request) {
 
 // --- DELETE /api/v1/runs/{run_id} ---
 
-// handleStopRun stops a non-terminal run, prunes Prometheus run-id labels, and closes
-// SSE subscribers.
+// handleStopRun stops a non-terminal run. The stats gathered up to the stop
+// are kept: the launcher saves them as the run's final snapshot, publishes
+// it on the event stream, and then closes the stream.
 //
 // @Summary      Stop run
-// @Description  Transitions a non-terminal run to "stopped". Refuses with 409 when the run is
-// @Description  already in a terminal state (completed/stopped/failed/rejected). On success,
-// @Description  Prometheus per-run label series are pruned and SSE subscribers are closed.
+// @Description  Transitions a non-terminal run to "stopped" and kills its k6 process. Refuses
+// @Description  with 409 when the run is already in a terminal state
+// @Description  (completed/stopped/failed/rejected). The stats gathered up to the stop are kept:
+// @Description  GET /runs/{run_id}/stats then serves a final snapshot (status "stopped",
+// @Description  source "k6_stream") built from k6's live output; k6 writes no summary export
+// @Description  when killed. The run's Prometheus series keep their last values. The event
+// @Description  stream closes after the final stats.snapshot event.
 // @Tags         runs
 // @Produce      json
 // @Param        run_id  path      string  true  "Run ID"
@@ -324,18 +333,19 @@ func (s *Server) handleStopRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Status first, then kill: the launcher's supervision goroutine sees the
-	// context cancellation and leaves the terminal 'stopped' status alone.
-	if s.deps.Launcher != nil {
-		s.deps.Launcher.Stop(runID)
-	}
+	// context cancellation, leaves the terminal 'stopped' status alone,
+	// saves the stats gathered so far and closes the event stream itself.
+	killed := s.deps.Launcher != nil && s.deps.Launcher.Stop(runID)
 
-	// Prune prometheus run_id labels and decrement active runs gauge.
-	s.deps.Metrics.PruneRunLabels(runID)
+	// Per-run Prometheus series are NOT pruned here: they keep their final
+	// values until the run record is evicted (see run.Store.OnEvict).
 	s.deps.Metrics.ActiveRuns.WithLabelValues().Dec()
 	s.deps.Metrics.RunsCompletedTotal.WithLabelValues(rn.WorkflowID, rn.WorkflowName, run.StatusStopped).Inc()
 
-	// Close SSE subscribers.
-	s.deps.Broker.CloseRun(runID)
+	if !killed {
+		// No live k6 process, so no supervisor will close the stream.
+		s.deps.Broker.CloseRun(runID)
+	}
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -345,15 +355,20 @@ func (s *Server) handleStopRun(w http.ResponseWriter, r *http.Request) {
 // handleRunEvents streams run events as Server-Sent Events.
 //
 // @Summary      Stream run events (SSE)
-// @Description  Server-Sent Events stream of run lifecycle and per-step events. Event types
-// @Description  emitted: step.ok, step.drop, iteration.done, phase.transition. Used by manteion
-// @Description  for live dashboards; not the canonical aggregated stats source. The Last-Event-ID
-// @Description  header is reserved for future resumable-stream support; the current handler does
-// @Description  not parse it (subscriber starts at the live edge).
+// @Description  Server-Sent Events stream of a run's progress. Event types emitted:
+// @Description  run.state (data {run_id, status, detail}) on every status change, and
+// @Description  stats.snapshot (data: the same document as GET /runs/{run_id}/stats) at least
+// @Description  every 5 seconds while the run is in flight plus a final one when it ends. On
+// @Description  connect the stream first sends the run's current run.state (and its latest
+// @Description  stats.snapshot, if any). A comment heartbeat (": heartbeat") goes out at least
+// @Description  every 15 seconds. The stream stays open for the whole run, whatever its length,
+// @Description  and closes once the run is terminal (immediately, for a run that already is).
+// @Description  Events carry no id; the Last-Event-ID header is not honored (a subscriber starts
+// @Description  at the live edge). Used by manteion for live dashboards; poll
+// @Description  GET /runs/{run_id}/stats for the authoritative final numbers.
 // @Tags         runs
 // @Produce      text/event-stream
 // @Param        run_id        path    string  true   "Run ID"
-// @Param        Last-Event-ID header  string  false  "Last event ID for resumable stream (reserved; not yet honored)"
 // @Success      200  "SSE stream of run events"
 // @Failure      404  {object}  api.ErrorResponse  "run not found"
 // @Failure      500  {object}  api.ErrorResponse  "streaming not supported by the underlying response writer"
@@ -371,19 +386,49 @@ func (s *Server) handleRunEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The server's read/write timeouts would cut the stream mid-run (the
+	// write deadline is absolute from the request start). Lift them for
+	// this response only; every other endpoint keeps them. Recorders and
+	// other writers that cannot do this just keep the server defaults.
+	rc := http.NewResponseController(w)
+	_ = rc.SetReadDeadline(time.Time{})
+	_ = rc.SetWriteDeadline(time.Time{})
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
-	flusher.Flush()
 
+	// Subscribe BEFORE reading the run's state: a run turning terminal after
+	// the read closes this subscription, and one that turned terminal
+	// before it is caught by the read.
 	ch, unsubscribe := s.deps.Broker.Subscribe(runID)
 	defer unsubscribe()
 
+	rn, ok := s.deps.Runs.Get(runID)
+	if !ok {
+		return
+	}
+	writeSSEEvent(w, runStateEvent(rn))
+	if snap, ok := s.deps.Snapshots.Get(runID); ok {
+		if payload, err := json.Marshal(snap); err == nil {
+			writeSSEEvent(w, sse.Event{Type: "stats.snapshot", Data: string(payload), RunID: runID})
+		}
+	}
+	flusher.Flush()
+	if run.IsTerminal(rn.Status) {
+		return
+	}
+
+	heartbeat := time.NewTicker(s.deps.SSEHeartbeat)
+	defer heartbeat.Stop()
 	for {
 		select {
 		case <-r.Context().Done():
 			return
+		case <-heartbeat.C:
+			fmt.Fprint(w, ": heartbeat\n\n")
+			flusher.Flush()
 		case event, open := <-ch:
 			if !open {
 				return
@@ -392,6 +437,15 @@ func (s *Server) handleRunEvents(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 		}
 	}
+}
+
+// runStateEvent renders a run's current status as a run.state event (the
+// same payload the launcher publishes on transitions).
+func runStateEvent(rn *run.Run) sse.Event {
+	payload, _ := json.Marshal(map[string]string{
+		"run_id": rn.ID, "status": rn.Status, "detail": rn.Reason,
+	})
+	return sse.Event{Type: "run.state", Data: string(payload), RunID: rn.ID}
 }
 
 func writeSSEEvent(w http.ResponseWriter, event sse.Event) {
@@ -403,15 +457,22 @@ func writeSSEEvent(w http.ResponseWriter, event sse.Event) {
 
 // --- GET /api/v1/runs/{run_id}/stats ---
 
-// handleRunStats returns the finalized stats snapshot for a run, or a placeholder envelope
-// when stats have not been written yet.
+// handleRunStats returns the run's current stats snapshot: interim while the
+// run is in flight, final once it is terminal.
 //
 // @Summary      Get run stats
-// @Description  Returns the finalized RunStats snapshot for a run. While the run is still in
-// @Description  flight (or finished without a snapshot persisted), responds 200 with a minimal
-// @Description  envelope { "run_id": ..., "status": "no stats available yet" } instead of 404.
-// @Description  The handler is tagged "metrics" rather than "runs" because it serves aggregate
-// @Description  numbers, not run-document state.
+// @Description  Returns the run's RunStats snapshot. While the run is in flight the snapshot is
+// @Description  interim ("final": false, "source": "k6_stream"): counts and latency percentiles
+// @Description  so far, aggregated by zeus from k6's live output and refreshed at least every
+// @Description  5 seconds (stream percentiles are approximate, within ~1%). Once the run is
+// @Description  terminal the snapshot is final ("final": true): for a run k6 finished
+// @Description  ("completed") the numbers come from k6's summary export ("source": "k6_summary");
+// @Description  for a stopped or failed run they are the stream totals gathered up to the end
+// @Description  ("source": "k6_stream"). The final snapshot can trail the terminal status by
+// @Description  a moment, so poll until "final" is true. Before any snapshot exists (the run
+// @Description  has not started k6, or never did) the response is 200 with a minimal envelope
+// @Description  { "run_id": ..., "status": "no stats available yet" }. Tagged "metrics" rather
+// @Description  than "runs" because it serves aggregate numbers, not run-document state.
 // @Tags         metrics
 // @Produce      json
 // @Param        run_id  path      string  true  "Run ID"

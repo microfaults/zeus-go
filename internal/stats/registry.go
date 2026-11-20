@@ -14,7 +14,6 @@ type Metrics struct {
 	RequestsSentTotal     *prometheus.CounterVec
 	RequestsOKTotal       *prometheus.CounterVec
 	RequestsDroppedTotal  *prometheus.CounterVec
-	VariantPicksTotal     *prometheus.CounterVec
 	IterationsTotal       *prometheus.CounterVec
 	AttacksStartedTotal   *prometheus.CounterVec
 	AttacksHitsTotal      *prometheus.CounterVec
@@ -23,7 +22,6 @@ type Metrics struct {
 
 	// Histograms
 	RequestDuration       *prometheus.HistogramVec
-	StepDuration          *prometheus.HistogramVec
 	IterationDuration     *prometheus.HistogramVec
 	AttackRequestDuration *prometheus.HistogramVec
 
@@ -56,27 +54,22 @@ func NewMetrics() *Metrics {
 
 		RequestsSentTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "zeus_requests_sent_total",
-			Help: "Total number of requests sent.",
+			Help: "HTTP requests sent by a run's k6 engine (k6 http_reqs); step_id is the request's k6 name tag (the DSL node id).",
 		}, []string{"run_id", "workflow_id", "step_id"}),
 
 		RequestsOKTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "zeus_requests_ok_total",
-			Help: "Total number of successful requests.",
+			Help: "HTTP requests k6 did not count as failed (k6 http_req_failed == 0), by step.",
 		}, []string{"run_id", "workflow_id", "step_id"}),
 
 		RequestsDroppedTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "zeus_requests_dropped_total",
-			Help: "Total number of dropped requests.",
+			Help: "Load the run could not offer. reason=\"dropped_iteration\" (step_id empty) counts k6 dropped_iterations: arrivals the open-loop executor skipped for lack of a free VU. A run with any is invalid for delta math.",
 		}, []string{"run_id", "workflow_id", "step_id", "reason"}),
-
-		VariantPicksTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "zeus_variant_picks_total",
-			Help: "Total number of variant picks.",
-		}, []string{"run_id", "workflow_id", "step_id", "variant_index"}),
 
 		IterationsTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "zeus_iterations_total",
-			Help: "Total number of workflow iterations.",
+			Help: "Workflow iterations completed by a run's k6 engine (k6 iterations).",
 		}, []string{"run_id", "workflow_id"}),
 
 		AttacksStartedTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
@@ -102,18 +95,13 @@ func NewMetrics() *Metrics {
 		// Histograms
 		RequestDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "zeus_request_duration_seconds",
-			Help:    "Duration of individual requests in seconds.",
+			Help:    "HTTP request duration in seconds (k6 http_req_duration), by step.",
 			Buckets: prometheus.DefBuckets,
-		}, []string{"run_id", "workflow_id", "step_id"}),
-
-		StepDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name: "zeus_step_duration_seconds",
-			Help: "Duration of workflow steps in seconds.",
 		}, []string{"run_id", "workflow_id", "step_id"}),
 
 		IterationDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name: "zeus_iteration_duration_seconds",
-			Help: "Duration of workflow iterations in seconds.",
+			Help: "Workflow iteration duration in seconds (k6 iteration_duration).",
 		}, []string{"run_id", "workflow_id"}),
 
 		AttackRequestDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
@@ -129,7 +117,7 @@ func NewMetrics() *Metrics {
 
 		ActiveVUs: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "zeus_active_vus",
-			Help: "Number of currently active virtual users.",
+			Help: "Active k6 virtual users of a run (k6 vus gauge); 0 once the run ends.",
 		}, []string{"run_id"}),
 
 		ActiveAttacks: prometheus.NewGaugeVec(prometheus.GaugeOpts{
@@ -155,14 +143,12 @@ func NewMetrics() *Metrics {
 		m.RequestsSentTotal,
 		m.RequestsOKTotal,
 		m.RequestsDroppedTotal,
-		m.VariantPicksTotal,
 		m.IterationsTotal,
 		m.AttacksStartedTotal,
 		m.AttacksHitsTotal,
 		m.AttacksMissesTotal,
 		m.DatasetsBytesIngested,
 		m.RequestDuration,
-		m.StepDuration,
 		m.IterationDuration,
 		m.AttackRequestDuration,
 		m.ActiveRuns,
@@ -181,7 +167,10 @@ func (m *Metrics) Registry() *prometheus.Registry {
 }
 
 // PruneRunLabels calls DeletePartialMatch on all metric families that carry
-// run_id as a label. This is called when a run reaches a terminal state.
+// run_id as a label. It runs when a run's record is evicted from the run
+// store (see run.Store.OnEvict), so a finished run's final values stay
+// scrapeable for as long as the run itself is listed. Zeus has no automatic
+// run eviction today; see the limitation noted in AGENTS.md.
 func (m *Metrics) PruneRunLabels(runID string) {
 	labels := prometheus.Labels{"run_id": runID}
 
@@ -189,12 +178,10 @@ func (m *Metrics) PruneRunLabels(runID string) {
 	m.RequestsSentTotal.DeletePartialMatch(labels)
 	m.RequestsOKTotal.DeletePartialMatch(labels)
 	m.RequestsDroppedTotal.DeletePartialMatch(labels)
-	m.VariantPicksTotal.DeletePartialMatch(labels)
 	m.IterationsTotal.DeletePartialMatch(labels)
 
 	// Histograms with run_id
 	m.RequestDuration.DeletePartialMatch(labels)
-	m.StepDuration.DeletePartialMatch(labels)
 	m.IterationDuration.DeletePartialMatch(labels)
 
 	// Gauges with run_id
