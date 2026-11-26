@@ -34,8 +34,16 @@ type LauncherConfig struct {
 	// carries no duration; runs with a DurationS get DurationS + 60s of
 	// grace instead. Default 30m.
 	MaxRunDuration time.Duration
-	Logger         *slog.Logger
+	// SnapshotInterval is how often an in-flight run's interim stats
+	// snapshot is refreshed in the snapshot store and published as a
+	// stats.snapshot SSE event. Default 2s (the contract promises <= 5s).
+	SnapshotInterval time.Duration
+	Logger           *slog.Logger
 }
+
+// sampleDrainTimeout bounds how long supervision waits, after k6 exits, for
+// the sample reader to drain k6's last flushed output.
+const sampleDrainTimeout = 10 * time.Second
 
 // LaunchSpec carries the per-run execution parameters (from the create-run
 // request plus the workflow document).
@@ -56,24 +64,34 @@ type LaunchSpec struct {
 
 // Launcher supervises one k6 subprocess per run and is the ONLY writer of a
 // run's post-create lifecycle: it advances starting -> validating -> running
-// -> completing -> completed/failed, parses the k6 summary into the snapshot
-// store, and publishes run.state events on the SSE broker. Stop kills the
-// subprocess; the DELETE handler owns the 'stopped' status (the launcher
-// never overwrites a terminal status -- UpdateStatus enforces the FSM).
+// -> completing -> completed/failed and publishes run.state events on the
+// SSE broker. Stop kills the subprocess; the DELETE handler owns the
+// 'stopped' status (the launcher never overwrites a terminal status --
+// UpdateStatus enforces the FSM).
+//
+// Stats: k6 streams every metric sample as JSON lines into a per-run named
+// pipe (--out json=<pipe>). A reader goroutine aggregates them on the fly
+// (stats.LiveRun: running totals + a fixed-size latency sketch, nothing
+// retained) and feeds the per-run Prometheus series. Every SnapshotInterval
+// the interim totals land in the snapshot store and go out as a
+// stats.snapshot event. When the run ends, the final snapshot comes from
+// k6's --summary-export if k6 wrote one (completed runs), else from the
+// stream totals gathered up to the end (stopped and failed runs).
 type Launcher struct {
 	cfg       LauncherConfig
 	runs      *Store
 	snapshots *stats.SnapshotStore
 	broker    *sse.Broker
+	metrics   *stats.Metrics
 
 	mu     sync.Mutex
 	cancel map[string]context.CancelFunc
 	wg     sync.WaitGroup
 }
 
-// NewLauncher wires a Launcher. snapshots and broker may be nil (no stats /
-// no events); runs is required.
-func NewLauncher(cfg LauncherConfig, runs *Store, snapshots *stats.SnapshotStore, broker *sse.Broker) *Launcher {
+// NewLauncher wires a Launcher. snapshots, broker and metrics may be nil (no
+// stats / no events / no Prometheus feed); runs is required.
+func NewLauncher(cfg LauncherConfig, runs *Store, snapshots *stats.SnapshotStore, broker *sse.Broker, metrics *stats.Metrics) *Launcher {
 	if cfg.K6Bin == "" {
 		cfg.K6Bin = "k6"
 	}
@@ -83,10 +101,13 @@ func NewLauncher(cfg LauncherConfig, runs *Store, snapshots *stats.SnapshotStore
 	if cfg.MaxRunDuration <= 0 {
 		cfg.MaxRunDuration = 30 * time.Minute
 	}
+	if cfg.SnapshotInterval <= 0 {
+		cfg.SnapshotInterval = 2 * time.Second
+	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
-	return &Launcher{cfg: cfg, runs: runs, snapshots: snapshots, broker: broker, cancel: map[string]context.CancelFunc{}}
+	return &Launcher{cfg: cfg, runs: runs, snapshots: snapshots, broker: broker, metrics: metrics, cancel: map[string]context.CancelFunc{}}
 }
 
 // Launch stages the workflow document and starts the k6 subprocess for rn.
@@ -100,16 +121,37 @@ func (l *Launcher) Launch(rn *Run, flowDoc []byte, spec LaunchSpec) error {
 		return err
 	}
 
-	summaryPath := filepath.Join(os.TempDir(), "zeus-run-"+rn.ID+"-summary.json")
+	files := runFiles{
+		flow:    flowPath,
+		summary: filepath.Join(os.TempDir(), "zeus-run-"+rn.ID+"-summary.json"),
+		samples: filepath.Join(os.TempDir(), "zeus-run-"+rn.ID+"-samples.pipe"),
+	}
+	_ = os.Remove(files.samples) // stale pipe from a crashed predecessor
+	sampleR, sampleHold, err := openSamplePipe(files.samples)
+	streaming := err == nil
+	if !streaming {
+		l.cfg.Logger.Warn("launcher: no live stats for run", "run_id", rn.ID, "error", err)
+	}
+	closePipe := func() {
+		if streaming {
+			_ = sampleR.Close()
+			_ = sampleHold.Close()
+		}
+	}
 
 	args := []string{
 		"run",
 		"--quiet",
-		"--summary-export", summaryPath,
+		"--summary-export", files.summary,
 		// p(99) is not in k6's default trend stats; RunStats wants it.
 		"--summary-trend-stats", "avg,min,med,max,p(90),p(95),p(99)",
 		"-e", "FLOW=zeus-runs/" + rn.ID,
 		"-e", "ZEUS_RUN_ID=" + rn.ID,
+	}
+	if streaming {
+		// k6's built-in JSON output: one sample per line, flushed every
+		// 200ms, written straight to the pipe (no k6-side buffering).
+		args = append(args, "--out", "json="+files.samples)
 	}
 	if spec.Persona == "" {
 		spec.Persona = "cautious"
@@ -158,32 +200,106 @@ func (l *Launcher) Launch(rn *Run, flowDoc []byte, spec LaunchSpec) error {
 
 	if err := cmd.Start(); err != nil {
 		cancel()
-		_ = os.Remove(flowPath)
+		closePipe()
+		files.remove()
 		l.fail(rn.ID, "k6 start: "+err.Error())
 		return err
+	}
+
+	startedAt := rn.StartedAt
+	if startedAt.IsZero() {
+		startedAt = time.Now()
+	}
+	live := stats.NewLiveRun(l.metrics, rn.ID, rn.WorkflowID, startedAt)
+	readerDone := make(chan struct{})
+	if streaming {
+		go l.readSamples(rn.ID, sampleR, live, readerDone)
+	} else {
+		close(readerDone)
 	}
 
 	l.mu.Lock()
 	l.cancel[rn.ID] = cancel
 	l.mu.Unlock()
 
-	l.transition(rn.ID, StatusRunning)
+	if l.transition(rn.ID, StatusRunning) {
+		// An all-zero interim snapshot right away, so /stats reports an
+		// in-flight run as such before the first tick.
+		l.publishSnapshot(live.Snapshot(StatusRunning, false))
+	}
+	tickStop, tickDone := make(chan struct{}), make(chan struct{})
+	go l.snapshotLoop(rn.ID, live, tickStop, tickDone)
 
 	l.wg.Add(1)
-	go l.supervise(ctx, cmd, rn.ID, flowPath, summaryPath, tail)
+	go l.supervise(ctx, cmd, rn.ID, files, tail, live, sampleHold, readerDone, func() {
+		close(tickStop)
+		<-tickDone
+	})
 	return nil
 }
 
-// Stop kills the run's k6 subprocess, if one is live. The caller (the
-// DELETE handler) owns the 'stopped' status transition; Stop only signals.
-// Unknown ids are a no-op.
-func (l *Launcher) Stop(runID string) {
+// runFiles are the per-run scratch paths the launcher owns.
+type runFiles struct {
+	flow    string // staged workflow document
+	summary string // k6 --summary-export target
+	samples string // named pipe k6's JSON output streams into
+}
+
+func (f runFiles) remove() {
+	_ = os.Remove(f.flow)
+	_ = os.Remove(f.summary)
+	_ = os.Remove(f.samples)
+}
+
+// readSamples aggregates the run's k6 sample stream until EOF: k6 has
+// exited and supervise has closed the placeholder write end.
+func (l *Launcher) readSamples(runID string, f *os.File, live *stats.LiveRun, done chan<- struct{}) {
+	defer close(done)
+	defer f.Close()
+	bad, err := streamSamples(f, live)
+	if err != nil {
+		l.cfg.Logger.Warn("launcher: read sample stream", "run_id", runID, "error", err)
+	}
+	if bad > 0 {
+		l.cfg.Logger.Warn("launcher: skipped undecodable k6 sample lines", "run_id", runID, "lines", bad)
+	}
+}
+
+// snapshotLoop refreshes the run's interim snapshot every SnapshotInterval
+// until stop is closed. Terminal runs are skipped: supervision owns the
+// final snapshot.
+func (l *Launcher) snapshotLoop(runID string, live *stats.LiveRun, stop <-chan struct{}, done chan<- struct{}) {
+	defer close(done)
+	t := time.NewTicker(l.cfg.SnapshotInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-t.C:
+			rn, ok := l.runs.Get(runID)
+			if !ok || IsTerminal(rn.Status) {
+				continue
+			}
+			l.publishSnapshot(live.Snapshot(rn.Status, false))
+		}
+	}
+}
+
+// Stop kills the run's k6 subprocess, if one is live, and reports whether
+// it was. The caller (the DELETE handler) owns the 'stopped' status
+// transition; Stop only signals. When Stop returns true, supervision saves
+// the stopped run's final stats snapshot and then closes its SSE stream.
+// Unknown ids are a no-op (false).
+func (l *Launcher) Stop(runID string) bool {
 	l.mu.Lock()
 	cancel := l.cancel[runID]
 	l.mu.Unlock()
 	if cancel != nil {
 		cancel()
+		return true
 	}
+	return false
 }
 
 // Close kills every live subprocess and waits for supervision to drain.
@@ -196,9 +312,10 @@ func (l *Launcher) Close() {
 	l.wg.Wait()
 }
 
-// supervise waits for the k6 process, finalizes the run's status, parses
-// the summary into the snapshot store, and closes the run's SSE stream.
-func (l *Launcher) supervise(ctx context.Context, cmd *exec.Cmd, runID, flowPath, summaryPath string, tail *tailBuffer) {
+// supervise waits for the k6 process, drains its sample stream, finalizes
+// the run's status and final stats snapshot, and closes its SSE stream.
+func (l *Launcher) supervise(ctx context.Context, cmd *exec.Cmd, runID string, files runFiles, tail *tailBuffer,
+	live *stats.LiveRun, sampleHold *os.File, readerDone <-chan struct{}, stopTicks func()) {
 	defer l.wg.Done()
 	err := cmd.Wait()
 
@@ -207,12 +324,25 @@ func (l *Launcher) supervise(ctx context.Context, cmd *exec.Cmd, runID, flowPath
 	delete(l.cancel, runID)
 	l.mu.Unlock()
 
+	// k6 is gone: drop zeus's placeholder write end so the reader drains
+	// whatever k6 flushed before exiting and then sees EOF; then stop the
+	// interim ticker so it cannot overwrite the final snapshot.
+	if sampleHold != nil {
+		_ = sampleHold.Close()
+	}
+	select {
+	case <-readerDone:
+	case <-time.After(sampleDrainTimeout):
+		l.cfg.Logger.Warn("launcher: sample stream did not drain; final stream stats may be short", "run_id", runID)
+	}
+	stopTicks()
+	live.End()
+
 	defer func() {
 		if cancel != nil {
 			cancel() // release the deadline timer (runs after the ctx.Err() branching)
 		}
-		_ = os.Remove(flowPath)
-		_ = os.Remove(summaryPath)
+		files.remove()
 		if l.broker != nil {
 			l.broker.CloseRun(runID)
 		}
@@ -222,11 +352,16 @@ func (l *Launcher) supervise(ctx context.Context, cmd *exec.Cmd, runID, flowPath
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			// The watchdog killed a wedged or overrunning k6 -- a
 			// launcher-owned failure, not an operator stop.
-			l.fail(runID, "run deadline exceeded")
+			if l.fail(runID, "run deadline exceeded") {
+				l.countEnded(runID, StatusFailed)
+			}
+			l.saveFinal(runID, live.Snapshot(StatusFailed, true))
 			return
 		}
 		// Killed via Stop/Close: the stop path owns the terminal status
-		// ('stopped'); just report what happened.
+		// ('stopped'); keep the stats gathered up to the kill and report
+		// what happened.
+		l.saveFinal(runID, live.Snapshot(StatusStopped, true))
 		l.publishState(runID, StatusStopped, "killed")
 		return
 	}
@@ -239,7 +374,10 @@ func (l *Launcher) supervise(ctx context.Context, cmd *exec.Cmd, runID, flowPath
 		var exitErr *exec.ExitError
 		if !errors.As(err, &exitErr) || exitErr.ExitCode() != 99 {
 			reason := fmt.Sprintf("k6 exited: %v; tail: %s", err, tail.String())
-			l.fail(runID, reason)
+			if l.fail(runID, reason) {
+				l.countEnded(runID, StatusFailed)
+			}
+			l.saveFinal(runID, live.Snapshot(StatusFailed, true))
 			return
 		}
 		if uerr := l.runs.UpdateReason(runID, "thresholds breached"); uerr != nil {
@@ -248,10 +386,54 @@ func (l *Launcher) supervise(ctx context.Context, cmd *exec.Cmd, runID, flowPath
 	}
 
 	l.transition(runID, StatusCompleting)
-	if rs := l.parseSummary(runID, summaryPath); rs != nil && l.snapshots != nil {
+	rs := l.parseSummary(runID, files.summary)
+	if rs == nil {
+		// No usable summary: keep what the stream saw rather than nothing.
+		rs = live.Snapshot(StatusCompleted, true)
+	}
+	l.saveFinal(runID, rs)
+	if l.transition(runID, StatusCompleted) {
+		l.countEnded(runID, StatusCompleted)
+	}
+}
+
+// publishSnapshot stores rs as the run's current snapshot and emits it as a
+// stats.snapshot event.
+func (l *Launcher) publishSnapshot(rs *stats.RunStats) {
+	if l.snapshots != nil {
 		l.snapshots.Save(rs)
 	}
-	l.transition(runID, StatusCompleted)
+	if l.broker != nil {
+		payload, err := json.Marshal(rs)
+		if err != nil {
+			return
+		}
+		l.broker.Publish(rs.RunID, sse.Event{Type: "stats.snapshot", Data: string(payload), RunID: rs.RunID})
+	}
+}
+
+// saveFinal publishes a run's final snapshot. If the run already holds a
+// terminal status (e.g. the operator stopped it while k6 was finishing),
+// the snapshot reports that status.
+func (l *Launcher) saveFinal(runID string, rs *stats.RunStats) {
+	if rn, ok := l.runs.Get(runID); ok && IsTerminal(rn.Status) {
+		rs.Status = rn.Status
+	}
+	l.publishSnapshot(rs)
+}
+
+// countEnded records a launcher-finalized run (completed or failed) in the
+// run counters. Stopped runs are counted by the DELETE handler.
+func (l *Launcher) countEnded(runID, status string) {
+	if l.metrics == nil {
+		return
+	}
+	rn, ok := l.runs.Get(runID)
+	if !ok {
+		return
+	}
+	l.metrics.ActiveRuns.WithLabelValues().Dec()
+	l.metrics.RunsCompletedTotal.WithLabelValues(rn.WorkflowID, rn.WorkflowName, status).Inc()
 }
 
 // stageFlow writes the workflow document where runner.js can open() it and
@@ -277,23 +459,30 @@ func (l *Launcher) stageFlow(runID string, flowDoc []byte) (string, error) {
 
 // transition advances the run's FSM, logging (not failing) a rejected
 // transition -- e.g. the run was stopped while we were about to complete it.
-func (l *Launcher) transition(runID, status string) {
+// It reports whether the transition happened.
+func (l *Launcher) transition(runID, status string) bool {
 	if err := l.runs.UpdateStatus(runID, status); err != nil {
 		l.cfg.Logger.Warn("launcher: transition rejected", "run_id", runID, "to", status, "error", err)
-		return
+		return false
 	}
 	l.publishState(runID, status, "")
+	return true
 }
 
-func (l *Launcher) fail(runID, reason string) {
+// fail finalizes the run as failed with reason; it reports whether the
+// failed transition happened (false if the run was already terminal).
+func (l *Launcher) fail(runID, reason string) bool {
 	l.cfg.Logger.Error("launcher: run failed", "run_id", runID, "reason", reason)
+	ok := true
 	if err := l.runs.UpdateStatus(runID, StatusFailed); err != nil {
 		l.cfg.Logger.Warn("launcher: fail transition rejected", "run_id", runID, "error", err)
+		ok = false
 	}
 	if err := l.runs.UpdateReason(runID, reason); err != nil {
 		l.cfg.Logger.Warn("launcher: persist failure reason", "run_id", runID, "error", err)
 	}
 	l.publishState(runID, StatusFailed, reason)
+	return ok
 }
 
 func (l *Launcher) publishState(runID, status, detail string) {
@@ -319,9 +508,9 @@ type k6Summary struct {
 	} `json:"metrics"`
 }
 
-// parseSummary maps the k6 summary export into a RunStats snapshot. A
-// missing or malformed summary is logged and skipped -- the run still
-// completes; only its stats endpoint stays empty.
+// parseSummary maps the k6 summary export into a final RunStats snapshot. A
+// missing or malformed summary is logged and yields nil -- the run still
+// completes, and supervision falls back to the stream totals.
 func (l *Launcher) parseSummary(runID, path string) *stats.RunStats {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -335,7 +524,15 @@ func (l *Launcher) parseSummary(runID, path string) *stats.RunStats {
 	}
 	ms := func(f float64) time.Duration { return time.Duration(f * float64(time.Millisecond)) }
 
-	rs := &stats.RunStats{RunID: runID, Status: StatusCompleted, FinalizedAt: time.Now()}
+	now := time.Now()
+	rs := &stats.RunStats{
+		RunID:       runID,
+		Status:      StatusCompleted,
+		Final:       true,
+		Source:      stats.SourceSummary,
+		UpdatedAt:   now,
+		FinalizedAt: &now,
+	}
 	if rn, ok := l.runs.Get(runID); ok {
 		rs.WorkflowID = rn.WorkflowID
 		rs.Duration = time.Since(rn.StartedAt)

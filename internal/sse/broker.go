@@ -4,7 +4,7 @@ import "sync"
 
 // Event represents an SSE event bound to a specific run.
 type Event struct {
-	Type  string `json:"type"` // e.g. "step.ok", "step.drop", "iteration.done", "stats.snapshot", "run.state"
+	Type  string `json:"type"` // "run.state" or "stats.snapshot"
 	Data  string `json:"data"` // JSON payload
 	RunID string `json:"run_id"`
 }

@@ -30,8 +30,8 @@ All Go handlers in this repo use [swaggo/swag](https://github.com/swaggo/swag) v
 `/runs/{run_id}/events` is the SSE endpoint:
 
 - `@Produce text/event-stream`
-- Event types are listed in the `@Description` text (`step.ok`, `step.drop`, `iteration.done`, `phase.transition`).
-- `Last-Event-ID` header is supported for resumable streams; document via `@Param Last-Event-ID header string false "..."`.
+- Event types are listed in the `@Description` text (`run.state`, `stats.snapshot`), along with the heartbeat comment.
+- `Last-Event-ID` is not honored (events carry no id); say so in the `@Description` rather than declaring the header as a parameter.
 
 ## Health endpoints
 

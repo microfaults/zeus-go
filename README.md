@@ -4,7 +4,7 @@ Execution plane of the faults-lab performance-attribution instrument. Zeus does 
 control plane (manteion) tells it to: it executes **workflow runs** by launching
 [k6](https://k6.io) as a supervised subprocess per run, and fires **additive vegeta attacks** at
 specific endpoints. It keeps no durable state — a run's truth lives in memory for the life of the
-process and in the stats snapshot parsed from k6's summary.
+process and in the stats snapshot built from k6's output.
 
 ## How a run works
 
@@ -17,14 +17,21 @@ process and in the stats snapshot parsed from k6's summary.
 3. The run walks a state machine: `starting → validating → running → completing →
    completed` (or `failed`; `stopped` via DELETE; `rejected` at create for invalid documents).
    Every transition publishes a `run.state` event on `GET /api/v1/runs/{id}/events` (SSE).
-4. On exit, zeus parses k6's `--summary-export` into the snapshot store —
-   `GET /api/v1/runs/{id}/stats` serves p50/p90/p95/p99, rates, and request counts.
-5. A **threshold breach is still a completed run**: k6 exit code 99 (any threshold, including the
+4. While k6 runs, its built-in JSON output (`--out json=<named pipe>`) streams every metric sample
+   to zeus, which aggregates on the fly (running totals plus a fixed-size latency sketch; no sample
+   is kept). That feeds the per-run Prometheus series on `GET /api/v1/metrics`, an interim
+   snapshot on `GET /api/v1/runs/{id}/stats` (`"final": false`), and a `stats.snapshot` SSE event,
+   both refreshed every 2s.
+5. On exit, zeus parses k6's `--summary-export` into the final snapshot (`"final": true`,
+   `"source": "k6_summary"`): request counts, iterations, dropped iterations and p50/p95/p99.
+   A run stopped via DELETE (k6 is killed and writes no summary) keeps the stream totals gathered
+   up to the stop as its final snapshot (`"source": "k6_stream"`).
+6. A **threshold breach is still a completed run**: k6 exit code 99 (any threshold, including the
    engine's built-in `dropped_iterations == 0` open-loop guard) completes with the reason
    `thresholds breached` recorded and the stats preserved. Load-quality judgment belongs to
    manteion's verdict, not to zeus. Any other nonzero exit is `failed` with the output tail as the
    reason.
-6. A supervision deadline (run duration + grace, capped) guarantees a wedged k6 cannot leave a run
+7. A supervision deadline (run duration + grace, capped) guarantees a wedged k6 cannot leave a run
    `running` forever — the watchdog kills it and marks the run `failed` with a deadline reason.
 
 **Restart amnesia is by design**: runs, attacks, and datasets are in-memory. After a zeus restart,

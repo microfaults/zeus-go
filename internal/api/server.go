@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
@@ -30,6 +31,40 @@ type Deps struct {
 	// Launcher executes workflow runs as supervised k6 subprocesses. nil =
 	// runs are accepted but never executed (test servers).
 	Launcher *run.Launcher
+	// SSEHeartbeat is the interval of the comment heartbeat on run event
+	// streams. 0 = DefaultSSEHeartbeat.
+	SSEHeartbeat time.Duration
+}
+
+// DefaultSSEHeartbeat keeps idle event streams (and any proxy between zeus
+// and the client) alive; the contract promises one at least every 15s.
+const DefaultSSEHeartbeat = 10 * time.Second
+
+// HTTPTimeouts are the http.Server timeouts. They apply to every endpoint
+// except the run event stream, which lifts its own read/write deadlines so
+// it can stay open for a whole run.
+type HTTPTimeouts struct {
+	Read  time.Duration
+	Write time.Duration
+	Idle  time.Duration
+}
+
+// DefaultHTTPTimeouts are zeus's production server timeouts.
+var DefaultHTTPTimeouts = HTTPTimeouts{
+	Read:  10 * time.Second,
+	Write: 30 * time.Second,
+	Idle:  60 * time.Second,
+}
+
+// NewHTTPServer builds the http.Server zeus listens with.
+func NewHTTPServer(addr string, h http.Handler, t HTTPTimeouts) *http.Server {
+	return &http.Server{
+		Addr:         addr,
+		Handler:      h,
+		ReadTimeout:  t.Read,
+		WriteTimeout: t.Write,
+		IdleTimeout:  t.Idle,
+	}
 }
 
 // Server holds shared dependencies and configures routing.
@@ -40,6 +75,9 @@ type Server struct {
 
 // NewServer creates an API server wired to the given components.
 func NewServer(d Deps) *Server {
+	if d.SSEHeartbeat <= 0 {
+		d.SSEHeartbeat = DefaultSSEHeartbeat
+	}
 	s := &Server{
 		deps: d,
 		mux:  http.NewServeMux(),
